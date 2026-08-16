@@ -62,7 +62,7 @@ class AndroidTvPairingSession(
         connected.soTimeout = SOCKET_TIMEOUT_MS
         socket = connected
         val input = DataInputStream(connected.inputStream)
-        write(connected, AndroidTvPairingCodec.request("atvremote", "LocalBeam"))
+        write(connected, AndroidTvPairingCodec.request("atvremote", androidTvClientName(alias)))
         while (true) {
             when (AndroidTvPairingCodec.read(readFrame(input))) {
                 PairingMessage.RequestAck -> write(connected, AndroidTvPairingCodec.option())
@@ -362,8 +362,12 @@ private object AndroidTvIdentity {
             val end = Calendar.getInstance().apply { set(2099, Calendar.DECEMBER, 31) }.time
             val spec = KeyPairGeneratorSpec.Builder(context)
                 .setAlias(alias)
-                .setSubject(javax.security.auth.x500.X500Principal("CN=LocalBeam"))
-                .setSerialNumber(BigInteger.ONE)
+                .setSubject(javax.security.auth.x500.X500Principal("CN=${androidTvClientName(alias)}"))
+                // Android TV may keep more than one client certificate. A
+                // unique serial prevents different phones from looking like
+                // the same X.509 identity to TV firmware that keys on the
+                // certificate subject/serial pair.
+                .setSerialNumber(BigInteger(128, SecureRandom()).or(BigInteger.ONE))
                 .setStartDate(start)
                 .setEndDate(end)
                 .setKeySize(2048)
@@ -458,3 +462,17 @@ private fun String.hexBytes(): ByteArray {
 private fun String.evenHexBytes(): ByteArray = (if (length % 2 == 0) this else "0$this").hexBytes()
 
 private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+/**
+ * Android TV may use the pairing client name as part of its registered
+ * controller identity. Derive a stable, per-pairing name from the unique
+ * Android Keystore alias instead of presenting every phone as "LocalBeam".
+ */
+private fun androidTvClientName(alias: String): String {
+    val suffix = alias
+        .removePrefix("androidtv_")
+        .filter { it.isLetterOrDigit() }
+        .takeLast(8)
+        .ifBlank { "client" }
+    return "LocalBeam-$suffix"
+}

@@ -66,7 +66,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -110,11 +109,6 @@ fun RemoteScreen(viewModel: AppViewModel, device: DiscoveredAtv) {
     var powerMenu by remember { mutableStateOf(false) }
     var tab by remember { mutableIntStateOf(0) }
     var introDismissed by remember { mutableStateOf(false) }
-    var pullRefreshing by remember { mutableStateOf(false) }
-
-    LaunchedEffect(connectionState) {
-        pullRefreshing = connectionState == ConnectionState.Connecting
-    }
 
     val buzz = rememberHaptic(hapticEnabled, hapticStrength)
 
@@ -188,12 +182,12 @@ fun RemoteScreen(viewModel: AppViewModel, device: DiscoveredAtv) {
         },
     ) { padding ->
         PullToRefreshBox(
-            isRefreshing = pullRefreshing,
+            isRefreshing = connectionState == ConnectionState.Connecting,
             onRefresh = {
-                if (connectionState == ConnectionState.Disconnected) {
-                    pullRefreshing = true
-                    viewModel.reconnect()
-                }
+                // A pull is an explicit reconnect request even when the
+                // status label still says Connected. Restart the transport
+                // and let the connection state turn the indicator off.
+                viewModel.reconnect()
             },
             modifier = Modifier.fillMaxSize().padding(padding),
         ) {

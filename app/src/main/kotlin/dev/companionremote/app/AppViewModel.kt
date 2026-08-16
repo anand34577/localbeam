@@ -32,6 +32,7 @@ import dev.companionremote.protocol.hap.PairSetup
 import dev.companionremote.protocol.hap.PairVerify
 import dev.companionremote.protocol.transport.SocketTransport
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -569,13 +570,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 if (attempt > 0) delay(RECONNECT_DELAY_MS)
                 // The Companion port changes across reboots: re-resolve first,
                 // falling back to the last known host/port (manual entry).
-                val target = if (device.direct) {
-                    device
-                } else {
-                    discovery.resolveByName(device.name) ?: device
-                }
                 var candidate: CompanionClient? = null
                 try {
+                    val target = if (device.direct) {
+                        device
+                    } else {
+                        discovery.resolveByName(device.name) ?: device
+                    }
                     val transport = SocketTransport.connect(target.host, target.port)
                     val connection = CompanionConnection(transport)
                     val newClient = CompanionClient(connection, credentials)
@@ -600,6 +601,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     consumeTouchEvents(newClient, generation)
                     return@launch
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     // Pair-verify can fail after the socket has been opened.
                     // Always close that attempt before retrying.
                     candidate?.close()
@@ -668,13 +670,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             var lastError: Exception? = null
             repeat(RECONNECT_ATTEMPTS) { attempt ->
                 if (attempt > 0) delay(RECONNECT_DELAY_MS)
-                val target = if (device.direct) {
-                    device
-                } else {
-                    androidTvDiscovery.resolveByName(device.name) ?: device
-                }
                 var candidate: AndroidTvRemoteClient? = null
                 try {
+                    val target = if (device.direct) {
+                        device
+                    } else {
+                        androidTvDiscovery.resolveByName(device.name) ?: device
+                    }
                     val newClient = AndroidTvRemoteClient(
                         getApplication(),
                         target.host,
@@ -700,6 +702,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     observeAndroidKeyboard(newClient)
                     return@launch
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     // The client is local to this attempt until connect succeeds.
                     // Close it explicitly so a failed TLS handshake cannot leak its socket.
                     candidate?.close()
@@ -761,16 +764,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         connectionState.value = ConnectionState.Connecting
         connectionError.value = null
         viewModelScope.launch {
-            val stored = credentialsRepository.load(device.name)
-            if (stored == null) {
+            try {
+                val stored = credentialsRepository.load(device.name)
+                    ?: error("Saved TV credentials are missing")
+                if (device.platform == TvPlatform.AndroidTv) {
+                    val credential = parseAndroidCredential(stored)
+                        ?: error("Saved Android TV credentials are invalid")
+                    connectAndroid(device, credential)
+                } else {
+                    connect(device, HapCredentials.parse(stored))
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 connectionState.value = ConnectionState.Disconnected
-                connectionError.value = strings.connectionLost
-                return@launch
-            }
-            if (device.platform == TvPlatform.AndroidTv) {
-                parseAndroidCredential(stored)?.let { connectAndroid(device, it) }
-            } else {
-                connect(device, HapCredentials.parse(stored))
+                connectionError.value = friendlyError(e)
             }
         }
     }
