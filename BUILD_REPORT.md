@@ -75,7 +75,7 @@ Verified 2026-07-06 against an Apple TV 4K (AppleTV14,1) at 192.168.50.173.
    filters to Apple TVs only (Macs/HomePods were showing up); keyboard mode
    uses a compact cross+OK above the soft keyboard so OK/down aren't hidden;
    Home supports long-press (Control Center); UI restyled; app renamed
-   **CyberRemote**.
+   **LocalBeam**.
 5. ✅ Keyboard: focus event detection confirmed (`_tiStarted`/`_tiStopped`);
    typed `hello 你好 🙂 한국어` (ASCII+Chinese+emoji+Korean) into the App
    Store search box; graceful no-op when unfocused confirmed (M6). Real-

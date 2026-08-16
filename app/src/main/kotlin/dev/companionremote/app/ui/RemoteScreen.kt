@@ -1,32 +1,32 @@
 package dev.companionremote.app.ui
 
-import android.widget.Toast
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,41 +35,27 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Apps
-import androidx.compose.material.icons.rounded.Clear
-import androidx.compose.material.icons.rounded.Computer
-import androidx.compose.material.icons.rounded.FitnessCenter
-import androidx.compose.material.icons.rounded.FlightTakeoff
 import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
-import androidx.compose.material.icons.rounded.Mic
-import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.PhotoLibrary
-import androidx.compose.material.icons.rounded.Podcasts
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Remove
-import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Tv
-import androidx.compose.material.icons.rounded.Videocam
+import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
@@ -78,6 +64,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -89,155 +76,47 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.companionremote.app.AppViewModel
 import dev.companionremote.app.ConnectionState
 import dev.companionremote.app.R
+import dev.companionremote.app.androidtv.AndroidTvButton
 import dev.companionremote.app.discovery.DiscoveredAtv
+import dev.companionremote.app.discovery.TvPlatform
 import dev.companionremote.app.i18n.LocalAppStrings
 import dev.companionremote.app.theme.glass
 import dev.companionremote.protocol.client.HidCommand
-import dev.companionremote.protocol.client.KeyboardFocusState
 
-private val ConnectedGreen = Color(0xFF9ECE6A)
-private val ConnectingAmber = Color(0xFFE0AF68)
-
-// Soft palette for the generated app tiles (no network needed — real
-// artwork would require calling out to Apple's servers, which this app
-// deliberately avoids).
-private val AppTileColors = listOf(
-    Color(0xFF7AA2F7), Color(0xFF9ECE6A), Color(0xFFE0AF68), Color(0xFFF7768E),
-    Color(0xFFBB9AF7), Color(0xFF7DCFFF), Color(0xFF73DACA), Color(0xFFFF9E64),
-)
-
-private fun appTileColor(key: String): Color {
-    val hash = key.fold(0) { acc, c -> acc * 31 + c.code }
-    return AppTileColors[Math.floorMod(hash, AppTileColors.size)]
-}
-
-private fun appInitial(name: String): String =
-    name.trim().firstOrNull()?.toString()?.uppercase() ?: "?"
-
-/**
- * Semantic icons + brand-ish colours for Apple's built-in tvOS apps, which
- * aren't in the iTunes catalog (so real artwork can't be fetched). Generic
- * Material icons — no Apple artwork — keep this copyright-clean.
- */
-private fun systemAppIcon(bundleId: String): Pair<ImageVector, Color>? = when (bundleId) {
-    "com.apple.TVSettings" -> Icons.Rounded.Settings to Color(0xFF8E8E93)
-    "com.apple.TVMusic" -> Icons.Rounded.MusicNote to Color(0xFFFA243C)
-    "com.apple.podcasts" -> Icons.Rounded.Podcasts to Color(0xFF9B4DE0)
-    "com.apple.TVPhotos" -> Icons.Rounded.PhotoLibrary to Color(0xFFF5A623)
-    "com.apple.Fitness" -> Icons.Rounded.FitnessCenter to Color(0xFF30D158)
-    "com.apple.Sing" -> Icons.Rounded.Mic to Color(0xFF5E5CE6)
-    "com.apple.TVSearch" -> Icons.Rounded.Search to Color(0xFF8E8E93)
-    "com.apple.TVWatchList" -> Icons.Rounded.Tv to Color(0xFF1C1C1E)
-    "com.apple.TVAppStore" -> Icons.Rounded.Apps to Color(0xFF0D96F6)
-    "com.apple.facetime" -> Icons.Rounded.Videocam to Color(0xFF34C759)
-    "com.apple.TVHomeSharing" -> Icons.Rounded.Computer to Color(0xFF8E8E93)
-    "com.apple.TestFlight" -> Icons.Rounded.FlightTakeoff to Color(0xFF0D96F6)
-    else -> null
-}
-
-/**
- * An app tile icon: a generated initial+colour tile by default, or the real
- * App Store artwork when the user has opted into network fetching.
- */
-@Composable
-private fun AppIcon(bundleId: String, name: String, fetchIcons: Boolean) {
-    val shape = RoundedCornerShape(12.dp)
-    val context = LocalContext.current
-
-    val system = systemAppIcon(bundleId)
-    if (system != null) {
-        Box(
-            Modifier.size(44.dp).clip(shape).background(system.second),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(system.first, contentDescription = name, Modifier.size(26.dp), tint = Color.White)
-        }
-        return
-    }
-
-    val artwork by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(
-        initialValue = null,
-        key1 = bundleId,
-        key2 = fetchIcons,
-    ) {
-        value = if (fetchIcons) {
-            dev.companionremote.app.data.AppIconFetcher.fetch(context, bundleId, name)
-        } else {
-            null
-        }
-    }
-
-    val current = artwork
-    if (current != null) {
-        androidx.compose.foundation.Image(
-            bitmap = current,
-            contentDescription = name,
-            modifier = Modifier.size(44.dp).clip(shape),
-        )
-    } else {
-        Box(
-            Modifier.size(44.dp).clip(shape).background(appTileColor(bundleId)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                appInitial(name),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF0B0E13),
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RemoteScreen(viewModel: AppViewModel, device: DiscoveredAtv) {
     val connectionState by viewModel.connectionState.collectAsState()
     val connectionError by viewModel.connectionError.collectAsState()
-    val focusState by viewModel.keyboardFocus.collectAsState()
-    val keyboardText by viewModel.keyboardText.collectAsState()
     val hapticEnabled by viewModel.hapticEnabled.collectAsState()
     val hapticStrength by viewModel.hapticStrength.collectAsState()
     val introSeen by viewModel.introSeen.collectAsState()
+    val androidTv = device.platform == TvPlatform.AndroidTv
     val s = LocalAppStrings.current
-    val context = LocalContext.current
-    val softKeyboard = LocalSoftwareKeyboardController.current
-    val imeVisible = WindowInsets.isImeVisible
     var powerMenu by remember { mutableStateOf(false) }
-    var keyboardOpen by remember { mutableStateOf(false) }
     var tab by remember { mutableIntStateOf(0) }
     var introDismissed by remember { mutableStateOf(false) }
+    var pullRefreshing by remember { mutableStateOf(false) }
+
+    LaunchedEffect(connectionState) {
+        pullRefreshing = connectionState == ConnectionState.Connecting
+    }
 
     val buzz = rememberHaptic(hapticEnabled, hapticStrength)
-    fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-
-    val startVoice = rememberVoiceInput(
-        onResult = { viewModel.dictateText(it) },
-        onError = { err ->
-            toast(
-                when (err) {
-                    VoiceError.PermissionDenied -> s.voicePermissionNeeded
-                    VoiceError.Unavailable -> s.voiceUnavailable
-                    VoiceError.Failed -> s.voiceUnavailable
-                },
-            )
-        },
-    )
 
     fun press(command: HidCommand) { buzz(); viewModel.pressButton(command) }
     fun hold(command: HidCommand) { buzz(); viewModel.holdButton(command) }
@@ -245,25 +124,15 @@ fun RemoteScreen(viewModel: AppViewModel, device: DiscoveredAtv) {
     fun okLong() { buzz(); viewModel.holdButton(HidCommand.Select) }
     fun volStep(up: Boolean) { viewModel.pressButton(if (up) HidCommand.VolumeUp else HidCommand.VolumeDown) }
     fun volTap(up: Boolean) { buzz(); volStep(up) }
-    fun onVoice() {
-        buzz()
-        if (focusState == KeyboardFocusState.Focused) startVoice() else toast(s.voiceNeedFocus)
-    }
-
-    LaunchedEffect(focusState) {
-        when (focusState) {
-            KeyboardFocusState.Focused -> keyboardOpen = true
-            KeyboardFocusState.Unfocused -> keyboardOpen = false
-            KeyboardFocusState.Unknown -> Unit
-        }
-    }
-    LaunchedEffect(tab) { if (tab == 2) viewModel.loadApps() }
+    fun pressAndroid(command: AndroidTvButton) { buzz(); viewModel.pressAndroidButton(command) }
 
     Scaffold(
-        containerColor = Color.Transparent,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         StatusDot(connectionState)
@@ -295,48 +164,60 @@ fun RemoteScreen(viewModel: AppViewModel, device: DiscoveredAtv) {
                     IconButton(onClick = { viewModel.openSettings() }) {
                         Icon(Icons.Rounded.Settings, contentDescription = s.settings)
                     }
-                    IconButton(onClick = { powerMenu = true }) {
+                    IconButton(
+                        onClick = {
+                            if (androidTv) {
+                                buzz()
+                                // Android's power key toggles between sleep and wake.
+                                viewModel.sleep()
+                            } else {
+                                powerMenu = true
+                            }
+                        },
+                    ) {
                         Icon(Icons.Rounded.PowerSettingsNew, contentDescription = "Power")
                     }
-                    DropdownMenu(expanded = powerMenu, onDismissRequest = { powerMenu = false }) {
-                        DropdownMenuItem(text = { Text(s.wake) }, onClick = { powerMenu = false; viewModel.wake() })
-                        DropdownMenuItem(text = { Text(s.sleep) }, onClick = { powerMenu = false; viewModel.sleep() })
+                    if (!androidTv) {
+                        DropdownMenu(expanded = powerMenu, onDismissRequest = { powerMenu = false }) {
+                            DropdownMenuItem(text = { Text(s.wake) }, onClick = { powerMenu = false; viewModel.wake() })
+                            DropdownMenuItem(text = { Text(s.sleep) }, onClick = { powerMenu = false; viewModel.sleep() })
+                        }
                     }
                 },
             )
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
-            SegmentedTabs(tab, onSelect = { tab = it })
-
-            when (connectionState) {
-                ConnectionState.Disconnected -> ConnectionBanner(connectionError) { viewModel.reconnect() }
-                ConnectionState.Connecting -> ReconnectingBanner()
-                ConnectionState.Connected -> Unit
-            }
-
-            if (keyboardOpen) {
-                KeyboardBar(
-                    text = keyboardText,
-                    focused = focusState == KeyboardFocusState.Focused,
-                    deviceName = device.name,
-                    onTextChange = viewModel::onKeyboardTextChanged,
-                    onClear = { viewModel.clearKeyboardText() },
-                    onHide = {
-                        keyboardOpen = false
-                        softKeyboard?.hide()
-                    },
-                )
-                if (imeVisible) {
-                    CompactRemote(::press, ::hold, ::ok, ::okLong, ::onVoice, ::volTap)
-                } else {
-                    DpadPane(::press, ::hold, ::ok, ::okLong, ::onVoice, ::volStep, ::volTap) { softKeyboard?.show() }
+        PullToRefreshBox(
+            isRefreshing = pullRefreshing,
+            onRefresh = {
+                if (connectionState == ConnectionState.Disconnected) {
+                    pullRefreshing = true
+                    viewModel.reconnect()
                 }
-            } else {
-                when (tab) {
-                    0 -> DpadPane(::press, ::hold, ::ok, ::okLong, ::onVoice, ::volStep, ::volTap) { keyboardOpen = true }
-                    1 -> TouchpadPane(viewModel, ::press, ::hold, ::ok, ::okLong, ::onVoice, ::volTap) { keyboardOpen = true }
-                    2 -> AppsPane(viewModel)
+            },
+            modifier = Modifier.fillMaxSize().padding(padding),
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                SegmentedTabs(tab, includeTouch = !androidTv, onSelect = { tab = it })
+
+                when (connectionState) {
+                    ConnectionState.Disconnected -> ConnectionBanner(connectionError) { viewModel.reconnect() }
+                    ConnectionState.Connecting -> ReconnectingBanner()
+                    ConnectionState.Connected -> Unit
+                }
+
+                if (tab == 0) {
+                    DpadPane(
+                        androidTv = androidTv,
+                        press = ::press,
+                        pressAndroid = ::pressAndroid,
+                        hold = ::hold,
+                        ok = ::ok,
+                        okLong = ::okLong,
+                        volTap = ::volTap,
+                    )
+                } else if (!androidTv) {
+                    TouchpadPane(viewModel, ::press, ::hold, ::ok, ::okLong)
                 }
             }
         }
@@ -351,8 +232,8 @@ fun RemoteScreen(viewModel: AppViewModel, device: DiscoveredAtv) {
 @Composable
 private fun StatusDot(state: ConnectionState) {
     val color = when (state) {
-        ConnectionState.Connected -> ConnectedGreen
-        ConnectionState.Connecting -> ConnectingAmber
+        ConnectionState.Connected -> MaterialTheme.colorScheme.primary
+        ConnectionState.Connecting -> MaterialTheme.colorScheme.tertiary
         ConnectionState.Disconnected -> MaterialTheme.colorScheme.error
     }
     Box(Modifier.size(9.dp).clip(CircleShape).background(color))
@@ -362,7 +243,8 @@ private fun StatusDot(state: ConnectionState) {
 private fun ReconnectingBanner() {
     val s = LocalAppStrings.current
     Surface(
-        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
@@ -374,6 +256,7 @@ private fun ReconnectingBanner() {
             Text(
                 s.reconnecting,
                 style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
                 modifier = Modifier.padding(start = 12.dp),
             )
         }
@@ -382,22 +265,27 @@ private fun ReconnectingBanner() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SegmentedTabs(selected: Int, onSelect: (Int) -> Unit) {
+private fun SegmentedTabs(selected: Int, includeTouch: Boolean, onSelect: (Int) -> Unit) {
     val s = LocalAppStrings.current
-    val titles = listOf(s.tabRemote to Icons.Default.Gamepad, s.tabTouch to Icons.Default.TouchApp, s.tabApps to Icons.Default.Apps)
+    val titles = if (includeTouch) {
+        listOf(s.tabRemote to Icons.Default.Gamepad, s.tabTouch to Icons.Default.TouchApp)
+    } else {
+        listOf(s.tabRemote to Icons.Default.Gamepad)
+    }
+    val safeSelected = selected.coerceIn(0, titles.lastIndex)
     TabRow(
-        selectedTabIndex = selected,
-        containerColor = Color.Transparent,
+        selectedTabIndex = safeSelected,
+        containerColor = MaterialTheme.colorScheme.background,
         indicator = { positions ->
             TabRowDefaults.PrimaryIndicator(
-                Modifier.tabIndicatorOffset(positions[selected]),
+                Modifier.tabIndicatorOffset(positions[safeSelected]),
                 width = 40.dp,
             )
         },
     ) {
         titles.forEachIndexed { i, (title, icon) ->
             Tab(
-                selected = selected == i,
+                selected = safeSelected == i,
                 onClick = { onSelect(i) },
                 text = { Text(title, style = MaterialTheme.typography.labelLarge) },
                 icon = { Icon(icon, contentDescription = null, Modifier.size(20.dp)) },
@@ -412,7 +300,8 @@ private fun SegmentedTabs(selected: Int, onSelect: (Int) -> Unit) {
 private fun ConnectionBanner(error: String?, onReconnect: () -> Unit) {
     val s = LocalAppStrings.current
     Surface(
-        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
         shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
@@ -423,6 +312,7 @@ private fun ConnectionBanner(error: String?, onReconnect: () -> Unit) {
             Text(
                 error ?: s.connectionLost,
                 style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
                 modifier = Modifier.weight(1f),
             )
             TextButton(onClick = onReconnect) { Text(s.reconnect) }
@@ -430,125 +320,227 @@ private fun ConnectionBanner(error: String?, onReconnect: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Full remote pane: big D-pad dial, a row of action keys, volume slider. */
 @Composable
-private fun KeyboardBar(
-    text: String,
-    focused: Boolean,
-    deviceName: String,
-    onTextChange: (String) -> Unit,
-    onClear: () -> Unit,
-    onHide: () -> Unit,
+private fun DpadPane(
+    androidTv: Boolean,
+    press: (HidCommand) -> Unit,
+    pressAndroid: (AndroidTvButton) -> Unit,
+    hold: (HidCommand) -> Unit,
+    ok: () -> Unit,
+    okLong: () -> Unit,
+    volTap: (Boolean) -> Unit,
 ) {
-    val s = LocalAppStrings.current
-    val focusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
-    val softKeyboard = LocalSoftwareKeyboardController.current
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        OutlinedTextField(
-            value = text,
-            onValueChange = onTextChange,
-            modifier = Modifier.weight(1f).focusRequester(focusRequester),
-            shape = RoundedCornerShape(16.dp),
-            label = { Text(if (focused) s.typingOn.format(deviceName) else s.noFieldFocused) },
-            enabled = focused,
-            singleLine = true,
-            trailingIcon = {
-                IconButton(onClick = onClear) {
-                    Icon(Icons.Rounded.Clear, contentDescription = "Clear TV text")
-                }
-            },
-        )
-        IconButton(onClick = onHide) {
-            Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = "Hide keyboard, back to remote")
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val wide = maxWidth >= 600.dp
+        val dpadDiameter = when {
+            maxWidth < 360.dp -> (maxWidth - 80.dp).coerceIn(208.dp, 248.dp)
+            maxWidth < 600.dp -> (maxWidth * 0.56f).coerceIn(224.dp, 264.dp)
+            else -> (maxWidth * 0.23f).coerceIn(232.dp, 280.dp)
         }
-    }
-    LaunchedEffect(focused) {
-        if (focused) {
-            focusRequester.requestFocus()
-            softKeyboard?.show()
+        if (wide) {
+            Row(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+                horizontalArrangement = Arrangement.spacedBy(28.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(
+                    Modifier.weight(1.1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    DpadDial(diameter = dpadDiameter, press = press, ok = ok, okLong = okLong)
+                }
+                Column(
+                    Modifier.weight(0.9f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(28.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            RemoteActionPanel(androidTv, press, pressAndroid, hold, volTap)
+                        }
+                    }
+                }
+            }
+        } else {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                DpadDial(diameter = dpadDiameter, press = press, ok = ok, okLong = okLong)
+                Spacer(Modifier.height(24.dp))
+                Surface(
+                    shape = RoundedCornerShape(28.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        RemoteActionPanel(androidTv, press, pressAndroid, hold, volTap)
+                    }
+                }
+            }
         }
     }
 }
 
-/** Full remote pane: big D-pad dial, a row of action keys, volume slider. */
 @Composable
-private fun DpadPane(
+private fun RemoteActionPanel(
+    androidTv: Boolean,
     press: (HidCommand) -> Unit,
+    pressAndroid: (AndroidTvButton) -> Unit,
     hold: (HidCommand) -> Unit,
-    ok: () -> Unit,
-    okLong: () -> Unit,
-    onVoice: () -> Unit,
-    volStep: (Boolean) -> Unit,
     volTap: (Boolean) -> Unit,
-    openKeyboard: () -> Unit,
 ) {
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        DpadDial(press = press, ok = ok, okLong = okLong)
-        Spacer(Modifier.height(28.dp))
+    var moreMenu by remember { mutableStateOf(false) }
+
+    @Composable
+    fun keyRow(content: @Composable RowScope.() -> Unit) {
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
-        ) {
-            RoundKey(icon = Icons.AutoMirrored.Filled.ArrowBack, label = "Back", size = 56.dp, onClick = { press(HidCommand.Menu) })
-            RoundKey(
-                icon = Icons.Rounded.Home,
-                label = "Home (hold: Control Center)",
-                size = 56.dp,
-                onClick = { press(HidCommand.Home) },
-                onLongClick = { hold(HidCommand.Home) },
-            )
-            RoundKey(icon = Icons.Rounded.Mic, label = "Voice", size = 56.dp, accent = true, onClick = onVoice)
-            RoundKey(painter = painterResource(R.drawable.ic_play_pause), label = "Play/Pause", size = 56.dp, onClick = { press(HidCommand.PlayPause) })
-            RoundKey(icon = Icons.Rounded.Keyboard, label = "Keyboard", size = 56.dp, onClick = openKeyboard)
+            content = content,
+        )
+    }
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Keep volume beside the primary action grid. The rail still supports
+        // tapping its upper/lower half and vertical swipes, but no longer
+        // creates a separate, mostly empty row at the bottom of the card.
+        VolumeSlider(onStep = volTap, onTap = volTap)
+        Column(Modifier.weight(1f)) {
+            keyRow {
+                RoundKey(
+                    icon = Icons.AutoMirrored.Filled.ArrowBack,
+                    label = "Back",
+                    size = 56.dp,
+                    onClick = { press(HidCommand.Menu) },
+                )
+                RoundKey(
+                    icon = Icons.Rounded.Home,
+                    label = "Home (hold: Control Center)",
+                    size = 56.dp,
+                    onClick = { press(HidCommand.Home) },
+                    onLongClick = { hold(HidCommand.Home) },
+                )
+                if (androidTv) {
+                    RoundKey(
+                        icon = Icons.Rounded.Settings,
+                        label = "TV settings",
+                        size = 56.dp,
+                        onClick = { pressAndroid(AndroidTvButton.Settings) },
+                    )
+                } else {
+                    RoundKey(
+                        icon = Icons.Rounded.Tv,
+                        label = "Guide",
+                        size = 56.dp,
+                        onClick = { press(HidCommand.Guide) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            keyRow {
+                RoundKey(
+                    painter = painterResource(R.drawable.ic_play_pause),
+                    label = "Play/Pause",
+                    size = 56.dp,
+                    onClick = { press(HidCommand.PlayPause) },
+                )
+                if (androidTv) {
+                    RoundKey(
+                        icon = Icons.Rounded.VolumeOff,
+                        label = "Mute",
+                        size = 56.dp,
+                        onClick = { pressAndroid(AndroidTvButton.Mute) },
+                    )
+                    RoundKey(
+                        icon = Icons.Rounded.Tv,
+                        label = "TV input",
+                        size = 56.dp,
+                        onClick = { pressAndroid(AndroidTvButton.TvInput) },
+                    )
+                } else {
+                    RoundKey(
+                        icon = Icons.Rounded.KeyboardArrowUp,
+                        label = "Channel up",
+                        size = 56.dp,
+                        onClick = { press(HidCommand.ChannelIncrement) },
+                    )
+                    Box {
+                        RoundKey(icon = Icons.Rounded.MoreVert, label = "More controls", size = 56.dp, onClick = { moreMenu = true })
+                        DropdownMenu(expanded = moreMenu, onDismissRequest = { moreMenu = false }) {
+                            DropdownMenuItem(text = { Text("Channel down") }, onClick = { moreMenu = false; press(HidCommand.ChannelDecrement) })
+                            DropdownMenuItem(text = { Text("Page up") }, onClick = { moreMenu = false; press(HidCommand.PageUp) })
+                            DropdownMenuItem(text = { Text("Page down") }, onClick = { moreMenu = false; press(HidCommand.PageDown) })
+                        }
+                    }
+                }
+            }
         }
-        Spacer(Modifier.height(24.dp))
-        VolumeSlider(onStep = volStep, onTap = volTap)
     }
 }
 
-/** The large circular D-pad with a centre OK (tap = select, hold = menu). */
-@OptIn(ExperimentalFoundationApi::class)
+/** Responsive circular D-pad with a centre OK (tap = select, hold = menu). */
 @Composable
-private fun DpadDial(press: (HidCommand) -> Unit, ok: () -> Unit, okLong: () -> Unit) {
+private fun DpadDial(
+    diameter: Dp,
+    press: (HidCommand) -> Unit,
+    ok: () -> Unit,
+    okLong: () -> Unit,
+) {
+    val arrowSize = (diameter * 0.24f).coerceIn(68.dp, 88.dp)
+    val okSize = (diameter * 0.30f).coerceIn(80.dp, 96.dp)
     Box(
         Modifier
-            .fillMaxWidth(0.86f)
-            .aspectRatio(1f)
+            .size(diameter)
             .glass(CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        DialArrow(Icons.Rounded.KeyboardArrowUp, "Up", Modifier.align(Alignment.TopCenter)) { press(HidCommand.Up) }
-        DialArrow(Icons.Rounded.KeyboardArrowDown, "Down", Modifier.align(Alignment.BottomCenter)) { press(HidCommand.Down) }
-        DialArrow(Icons.AutoMirrored.Rounded.KeyboardArrowLeft, "Left", Modifier.align(Alignment.CenterStart)) { press(HidCommand.Left) }
-        DialArrow(Icons.AutoMirrored.Rounded.KeyboardArrowRight, "Right", Modifier.align(Alignment.CenterEnd)) { press(HidCommand.Right) }
-        Box(
-            Modifier.size(96.dp).clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer)
-                .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
-                .combinedClickable(onClick = ok, onLongClick = okLong),
-            contentAlignment = Alignment.Center,
+        DialArrow(Icons.Rounded.KeyboardArrowUp, "Up", arrowSize, Modifier.align(Alignment.TopCenter)) { press(HidCommand.Up) }
+        DialArrow(Icons.Rounded.KeyboardArrowDown, "Down", arrowSize, Modifier.align(Alignment.BottomCenter)) { press(HidCommand.Down) }
+        DialArrow(Icons.AutoMirrored.Rounded.KeyboardArrowLeft, "Left", arrowSize, Modifier.align(Alignment.CenterStart)) { press(HidCommand.Left) }
+        DialArrow(Icons.AutoMirrored.Rounded.KeyboardArrowRight, "Right", arrowSize, Modifier.align(Alignment.CenterEnd)) { press(HidCommand.Right) }
+        PressableCircle(
+            size = okSize,
+            accent = true,
+            onClick = ok,
+            onLongClick = okLong,
         ) {
             Text(
                 "OK",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                color = it,
             )
         }
     }
 }
 
 @Composable
-private fun DialArrow(icon: ImageVector, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    IconButton(onClick = onClick, modifier = modifier.size(76.dp)) {
-        Icon(icon, contentDescription = label, Modifier.size(38.dp), tint = MaterialTheme.colorScheme.onSurface)
+private fun DialArrow(
+    icon: ImageVector,
+    label: String,
+    size: Dp,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    PressableCircle(
+        size = size,
+        modifier = modifier,
+        showContainer = false,
+        showBorder = false,
+        onClick = onClick,
+    ) {
+        KeyGlyph(icon, null, label, size * 0.50f, it)
     }
 }
 
@@ -562,13 +554,54 @@ private fun DialArrow(icon: ImageVector, label: String, modifier: Modifier = Mod
 @Composable
 private fun VolumeSlider(onStep: (Boolean) -> Unit, onTap: (Boolean) -> Unit) {
     val shape = RoundedCornerShape(34.dp)
+    var pressedHalf by remember { mutableStateOf<Boolean?>(null) }
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressedHalf != null) 0.93f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium,
+        ),
+        label = "volumeButtonScale",
+    )
+    val railColor by animateColorAsState(
+        targetValue = if (pressedHalf != null) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh
+        },
+        label = "volumeButtonColor",
+    )
+    val railBorderColor by animateColorAsState(
+        targetValue = if (pressedHalf != null) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.outlineVariant
+        },
+        label = "volumeButtonBorderColor",
+    )
     Box(
         Modifier
             .width(64.dp)
             .height(172.dp)
-            .glass(shape)
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
+            .clip(shape)
+            .background(railColor, shape)
+            .border(1.dp, railBorderColor, shape)
             .pointerInput(Unit) {
-                detectTapGestures { offset -> onTap(offset.y < size.height / 2f) }
+                detectTapGestures(
+                    onPress = { offset ->
+                        pressedHalf = offset.y < size.height / 2f
+                        try {
+                            tryAwaitRelease()
+                        } finally {
+                            pressedHalf = null
+                        }
+                    },
+                    onTap = { offset -> onTap(offset.y < size.height / 2f) },
+                )
             }
             .pointerInput(Unit) {
                 var acc = 0f
@@ -608,102 +641,6 @@ private fun VolumeSlider(onStep: (Boolean) -> Unit, onTap: (Boolean) -> Unit) {
     }
 }
 
-/**
- * Compact but complete remote shown above the soft keyboard. Laid out
- * **horizontally** — function keys flank the arrow cross — so its height is
- * just the cross and nothing gets pushed off-screen by the keyboard.
- */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun CompactRemote(
-    press: (HidCommand) -> Unit,
-    hold: (HidCommand) -> Unit,
-    ok: () -> Unit,
-    okLong: () -> Unit,
-    onVoice: () -> Unit,
-    volTap: (Boolean) -> Unit,
-) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // Left column: navigation + media
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            MiniKey(icon = Icons.AutoMirrored.Filled.ArrowBack, label = "Back") { press(HidCommand.Menu) }
-            MiniKey(
-                icon = Icons.Rounded.Home,
-                label = "Home (hold: Control Center)",
-                onLongClick = { hold(HidCommand.Home) },
-            ) { press(HidCommand.Home) }
-            MiniKey(painter = painterResource(R.drawable.ic_play_pause), label = "Play/Pause") { press(HidCommand.PlayPause) }
-        }
-
-        // Centre: aligned arrow cross with OK
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            MiniKey(icon = Icons.Rounded.KeyboardArrowUp, label = "Up") { press(HidCommand.Up) }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                MiniKey(icon = Icons.AutoMirrored.Rounded.KeyboardArrowLeft, label = "Left") { press(HidCommand.Left) }
-                Box(
-                    Modifier.size(56.dp).clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer)
-                        .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
-                        .combinedClickable(onClick = ok, onLongClick = okLong),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "OK",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                }
-                MiniKey(icon = Icons.AutoMirrored.Rounded.KeyboardArrowRight, label = "Right") { press(HidCommand.Right) }
-            }
-            MiniKey(icon = Icons.Rounded.KeyboardArrowDown, label = "Down") { press(HidCommand.Down) }
-        }
-
-        // Right column: voice + volume
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            MiniKey(icon = Icons.Rounded.Mic, label = "Voice", accent = true) { onVoice() }
-            MiniKey(icon = Icons.Rounded.Add, label = "Volume up") { volTap(true) }
-            MiniKey(icon = Icons.Rounded.Remove, label = "Volume down") { volTap(false) }
-        }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun MiniKey(
-    label: String,
-    icon: ImageVector? = null,
-    painter: Painter? = null,
-    accent: Boolean = false,
-    onLongClick: (() -> Unit)? = null,
-    onClick: () -> Unit,
-) {
-    val shape = CircleShape
-    Box(
-        Modifier.size(52.dp).glass(shape).combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        val tint = if (accent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-        KeyGlyph(icon, painter, label, 24.dp, tint)
-    }
-}
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TouchpadPane(
@@ -712,9 +649,6 @@ private fun TouchpadPane(
     hold: (HidCommand) -> Unit,
     ok: () -> Unit,
     okLong: () -> Unit,
-    onVoice: () -> Unit,
-    volTap: (Boolean) -> Unit,
-    openKeyboard: () -> Unit,
 ) {
     val lastTouch = remember { mutableStateOf(500L to 500L) }
     val hintColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f)
@@ -725,7 +659,7 @@ private fun TouchpadPane(
                 .weight(1f)
                 .glass(RoundedCornerShape(28.dp))
                 .pointerInput(Unit) {
-                    detectTapGestures(onTap = { viewModel.touchTap() }, onLongPress = { viewModel.holdButton(HidCommand.Select) })
+                    detectTapGestures(onTap = { ok() }, onLongPress = { okLong() })
                 }
                 .pointerInput(Unit) {
                     detectDragGestures(
@@ -779,77 +713,9 @@ private fun TouchpadPane(
                 onClick = { press(HidCommand.Home) },
                 onLongClick = { hold(HidCommand.Home) },
             )
-            RoundKey(icon = Icons.Rounded.Mic, label = "Voice", size = 48.dp, accent = true, onClick = onVoice)
             RoundKey(painter = painterResource(R.drawable.ic_play_pause), label = "Play/Pause", size = 48.dp, onClick = { press(HidCommand.PlayPause) })
-            RoundKey(icon = Icons.Rounded.Keyboard, label = "Keyboard", size = 48.dp, onClick = openKeyboard)
-            RoundKey(icon = Icons.Rounded.Remove, label = "Volume down", size = 48.dp, onClick = { volTap(false) })
-            RoundKey(icon = Icons.Rounded.Add, label = "Volume up", size = 48.dp, onClick = { volTap(true) })
-        }
-    }
-}
-
-@Composable
-private fun AppsPane(viewModel: AppViewModel) {
-    val s = LocalAppStrings.current
-    val apps by viewModel.apps.collectAsState()
-    val error by viewModel.appsError.collectAsState()
-    val fetchIcons by viewModel.fetchAppIcons.collectAsState()
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                s.appIcons,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-            )
-            Switch(checked = fetchIcons, onCheckedChange = { viewModel.setFetchAppIcons(it) })
-        }
-        Box(Modifier.fillMaxSize()) {
-            AppsGrid(viewModel, apps, error, fetchIcons)
-        }
-    }
-}
-
-@Composable
-private fun AppsGrid(
-    viewModel: AppViewModel,
-    apps: List<Pair<String, String>>?,
-    error: String?,
-    fetchIcons: Boolean,
-) {
-    when {
-        error != null -> Column(
-            Modifier.fillMaxSize().padding(32.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(error!!, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(12.dp))
-            TextButton(onClick = { viewModel.loadApps(force = true) }) { Text(LocalAppStrings.current.retry) }
-        }
-        apps == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
-        else -> LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 150.dp),
-            modifier = Modifier.fillMaxSize().padding(12.dp),
-        ) {
-            items(apps!!, key = { it.first }) { (bundleId, name) ->
-                ElevatedCard(
-                    onClick = { viewModel.launchApp(bundleId) },
-                    modifier = Modifier.padding(6.dp),
-                    shape = RoundedCornerShape(18.dp),
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        AppIcon(bundleId = bundleId, name = name, fetchIcons = fetchIcons)
-                        Spacer(Modifier.height(12.dp))
-                        Text(name, style = MaterialTheme.typography.titleSmall, maxLines = 2, fontWeight = FontWeight.Medium)
-                    }
-                }
-            }
+            RoundKey(icon = Icons.Rounded.Tv, label = "Guide", size = 48.dp, onClick = { press(HidCommand.Guide) })
+            RoundKey(icon = Icons.Rounded.KeyboardArrowUp, label = "Channel up", size = 48.dp, onClick = { press(HidCommand.ChannelIncrement) })
         }
     }
 }
@@ -861,24 +727,101 @@ private fun RoundKey(
     label: String,
     icon: ImageVector? = null,
     painter: Painter? = null,
-    size: androidx.compose.ui.unit.Dp = 60.dp,
+    size: Dp = 60.dp,
+    modifier: Modifier = Modifier,
     accent: Boolean = false,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
 ) {
-    val shape = CircleShape
+    PressableCircle(
+        size = size,
+        modifier = modifier,
+        accent = accent,
+        onClick = onClick,
+        onLongClick = onLongClick,
+    ) {
+        KeyGlyph(icon, painter, label, size * 0.42f, it)
+    }
+}
+
+/** Material press feedback: ripple, spring compression and a tonal colour shift. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun PressableCircle(
+    size: Dp,
+    modifier: Modifier = Modifier,
+    accent: Boolean = false,
+    showContainer: Boolean = true,
+    showBorder: Boolean = true,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    content: @Composable (Color) -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.90f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium,
+        ),
+        label = "remoteButtonScale",
+    )
+    val containerColor by animateColorAsState(
+        targetValue = when {
+            !showContainer && pressed -> MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+            !showContainer -> Color.Transparent
+            pressed && accent -> MaterialTheme.colorScheme.primary
+            pressed -> MaterialTheme.colorScheme.primaryContainer
+            accent -> MaterialTheme.colorScheme.primaryContainer
+            else -> MaterialTheme.colorScheme.surfaceContainerHigh
+        },
+        label = "remoteButtonColor",
+    )
+    val contentColor by animateColorAsState(
+        targetValue = when {
+            !showContainer && pressed -> MaterialTheme.colorScheme.primary
+            !showContainer -> MaterialTheme.colorScheme.onSurface
+            pressed && accent -> MaterialTheme.colorScheme.onPrimary
+            pressed || accent -> MaterialTheme.colorScheme.onPrimaryContainer
+            else -> MaterialTheme.colorScheme.onSurface
+        },
+        label = "remoteButtonContentColor",
+    )
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            !showBorder -> Color.Transparent
+            pressed -> MaterialTheme.colorScheme.primary
+            else -> MaterialTheme.colorScheme.outlineVariant
+        },
+        label = "remoteButtonBorderColor",
+    )
+
     Box(
-        Modifier.size(size).glass(shape).combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        modifier
+            .size(size)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(CircleShape)
+            .background(containerColor, CircleShape)
+            .then(if (showBorder) Modifier.border(1.dp, borderColor, CircleShape) else Modifier)
+            .combinedClickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                onClick = onClick,
+                onLongClick = onLongClick,
+            ),
         contentAlignment = Alignment.Center,
     ) {
-        val tint = if (accent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-        KeyGlyph(icon, painter, label, size * 0.42f, tint)
+        content(contentColor)
     }
 }
 
 /** Renders either a vector [icon] or a drawable [painter] as a key glyph. */
 @Composable
-private fun KeyGlyph(icon: ImageVector?, painter: Painter?, label: String, glyphSize: androidx.compose.ui.unit.Dp, tint: Color) {
+private fun KeyGlyph(icon: ImageVector?, painter: Painter?, label: String, glyphSize: Dp, tint: Color) {
     val p = painter ?: icon?.let { rememberVectorPainter(it) } ?: return
     Icon(p, contentDescription = label, Modifier.size(glyphSize), tint = tint)
 }

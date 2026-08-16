@@ -205,7 +205,7 @@ class Commands(private val options: Map<String, String>) {
         val connection = CompanionConnection(transport)
         connection.start()
         try {
-            val pairSetup = PairSetup(connection, name = options["name"] ?: "CyberRemote")
+            val pairSetup = PairSetup(connection, name = options["name"] ?: "LocalBeam")
             pairSetup.startPairing()
             print("Enter the PIN shown on the TV: ")
             val pin = readLine()?.trim() ?: fail("no PIN entered")

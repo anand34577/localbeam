@@ -3,6 +3,7 @@ package dev.companionremote.app.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -54,11 +55,10 @@ enum class VoiceError { PermissionDenied, Unavailable, Failed }
 /**
  * On-device speech recognition for dictating into a TV search box. Holds the
  * [SpeechRecognizer], Compose-observable [listening]/[partial] state and the
- * offline→online fallback logic. Created once via [remember].
+ * on-device recognition lifecycle. Created once via [remember].
  *
- * Privacy: prefers offline recognition; only if the offline engine reports the
- * language unavailable does it retry online. Recognition is done by the Android
- * system — CyberRemote itself opens no network connections of its own.
+ * Privacy: this controller is only constructed with Android's on-device
+ * recognizer. There is no online fallback, so audio stays on the device.
  */
 private class VoiceController(
     private val recognizer: SpeechRecognizer?,
@@ -69,8 +69,6 @@ private class VoiceController(
         private set
     var partial by mutableStateOf("")
         private set
-
-    private var triedOnline = false
 
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {}
@@ -97,14 +95,6 @@ private class VoiceController(
         }
 
         override fun onError(error: Int) {
-            val recoverable = error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ||
-                error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ||
-                error == SpeechRecognizer.ERROR_NO_MATCH
-            if (recoverable && !triedOnline) {
-                triedOnline = true
-                startListening(preferOffline = false)
-                return
-            }
             listening = false
             partial = ""
             // NO_MATCH / CLIENT are benign (silence, user cancel).
@@ -118,19 +108,21 @@ private class VoiceController(
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
-    private fun makeIntent(preferOffline: Boolean) =
+    private fun makeIntent() =
         Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            if (preferOffline) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            // Keep dictation local; this app deliberately has no cloud speech
+            // fallback or analytics path.
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         }
 
-    private fun startListening(preferOffline: Boolean) {
+    private fun startListening() {
         val r = recognizer ?: return
         r.setRecognitionListener(listener)
-        r.startListening(makeIntent(preferOffline))
+        r.startListening(makeIntent())
     }
 
     fun begin() {
@@ -138,10 +130,15 @@ private class VoiceController(
             onError(VoiceError.Unavailable)
             return
         }
-        triedOnline = false
+        if (listening) return
         partial = ""
         listening = true
-        startListening(preferOffline = true)
+        runCatching { startListening() }
+            .onFailure {
+                listening = false
+                partial = ""
+                onError(VoiceError.Failed)
+            }
     }
 
     fun cancel() {
@@ -168,8 +165,11 @@ fun rememberVoiceInput(
     val currentOnError by rememberUpdatedState(onError)
 
     val controller = remember {
-        val recognizer = if (SpeechRecognizer.isRecognitionAvailable(context)) {
-            SpeechRecognizer.createSpeechRecognizer(context)
+        val recognizer = if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+        ) {
+            SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
         } else {
             null
         }

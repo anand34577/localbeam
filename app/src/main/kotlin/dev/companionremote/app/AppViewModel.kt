@@ -3,18 +3,24 @@ package dev.companionremote.app
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import dev.companionremote.app.data.AppSkin
+import dev.companionremote.app.androidtv.AndroidTvButton
+import dev.companionremote.app.androidtv.AndroidTvPairingSession
+import dev.companionremote.app.androidtv.AndroidTvRemoteClient
 import dev.companionremote.app.data.CredentialsRepository
 import dev.companionremote.app.data.HapticStrength
+import dev.companionremote.app.data.SavedDeviceEndpoint
 import dev.companionremote.app.data.SettingsRepository
 import dev.companionremote.app.data.ThemeMode
+import dev.companionremote.app.discovery.AndroidTvDiscovery
 import dev.companionremote.app.discovery.AtvDiscovery
 import dev.companionremote.app.discovery.DiscoveredAtv
+import dev.companionremote.app.discovery.TvPlatform
 import dev.companionremote.app.i18n.AppLanguage
 import dev.companionremote.app.i18n.AppStrings
 import dev.companionremote.app.i18n.EnglishStrings
 import dev.companionremote.app.i18n.currentSystemLanguage
 import dev.companionremote.app.i18n.resolveStrings
+import dev.companionremote.app.theme.ThemeVariant
 import dev.companionremote.protocol.client.CompanionClient
 import dev.companionremote.protocol.client.HidCommand
 import dev.companionremote.protocol.client.KeyboardFocusState
@@ -24,19 +30,17 @@ import dev.companionremote.protocol.companion.CompanionConnection
 import dev.companionremote.protocol.hap.HapCredentials
 import dev.companionremote.protocol.hap.PairSetup
 import dev.companionremote.protocol.hap.PairVerify
-import dev.companionremote.app.update.AppUpdater
-import dev.companionremote.app.update.UpdateInfo
 import dev.companionremote.protocol.transport.SocketTransport
-import java.io.File
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 /** Which screen is showing. */
 sealed interface Screen {
+    data object Startup : Screen
     data object DeviceList : Screen
     data object Settings : Screen
     data class Pairing(val device: DiscoveredAtv) : Screen
@@ -47,17 +51,6 @@ enum class ConnectionState { Connecting, Connected, Disconnected }
 
 /** Per-device pairing check triggered by the refresh button in Settings. */
 enum class DeviceVerify { Idle, Checking, Ok, Failed }
-
-/** In-app update lifecycle (GitHub Releases). */
-sealed interface UpdateState {
-    data object Idle : UpdateState
-    data class Checking(val manual: Boolean) : UpdateState
-    data object UpToDate : UpdateState
-    data class Available(val info: UpdateInfo) : UpdateState
-    data class Downloading(val info: UpdateInfo, val progress: Float) : UpdateState
-    data class Ready(val info: UpdateInfo, val file: File) : UpdateState
-    data class Failed(val message: String?) : UpdateState
-}
 
 data class PairingUi(
     val awaitingPin: Boolean = false,
@@ -74,10 +67,11 @@ data class DeviceListUi(
 class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val discovery = AtvDiscovery(application)
+    private val androidTvDiscovery = AndroidTvDiscovery(application)
     private val credentialsRepository = CredentialsRepository(application)
     private val settingsRepository = SettingsRepository(application)
 
-    val screen = MutableStateFlow<Screen>(Screen.DeviceList)
+    val screen = MutableStateFlow<Screen>(Screen.Startup)
     val deviceList = MutableStateFlow(DeviceListUi())
     val pairing = MutableStateFlow(PairingUi())
     val connectionState = MutableStateFlow(ConnectionState.Disconnected)
@@ -89,11 +83,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** Theme mode (persisted). */
     val themeMode = MutableStateFlow(ThemeMode.System)
 
-    /** Visual skin (persisted). */
-    val skin = MutableStateFlow(AppSkin.Midnight)
-
-    /** Whether to fetch real app icons over the network (opt-in). */
-    val fetchAppIcons = MutableStateFlow(false)
+    /** Accent direction (persisted); all variants remain semantic Material 3 palettes. */
+    val themeVariant = MutableStateFlow(ThemeVariant.LocalBeam)
 
     /** Button-press vibration feedback (persisted). */
     val hapticEnabled = MutableStateFlow(true)
@@ -102,19 +93,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** Whether the first-run remote tutorial has already been shown. */
     val introSeen = MutableStateFlow(false)
 
-    /** In-app update settings + state. */
-    val autoCheckUpdates = MutableStateFlow(true)
-    val autoDownloadUpdates = MutableStateFlow(false)
-    val updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
-    private var updateJob: Job? = null
-
     // Where to return when leaving Settings (device list or the remote).
     private var settingsReturnTo: Screen = Screen.DeviceList
+    private var startupRoutingPending = true
 
     /** Paired device names, shown in Settings for management. */
     val pairedDevices = MutableStateFlow<List<String>>(emptyList())
+    /** Paired device opened automatically on app start. */
+    val defaultDeviceName = MutableStateFlow<String?>(null)
 
-    /** Name of the Apple TV currently being controlled (for "in use"). */
+    /** Name of the TV currently being controlled (for "in use"). */
     val activeDeviceName = MutableStateFlow<String?>(null)
 
     /** Per-device pairing-check state, keyed by device name. */
@@ -132,11 +120,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** Set while the remote screen is active. */
     var client: CompanionClient? = null
         private set
+    private var androidClient: AndroidTvRemoteClient? = null
     private var pairSetup: PairSetup? = null
     private var pairingConnection: CompanionConnection? = null
+    private var androidPairing: AndroidTvPairingSession? = null
     private var reconnectJob: Job? = null
     private var keyboardFocusJob: Job? = null
+    private var androidKeyboardTextJob: Job? = null
     private var textSyncJob: Job? = null
+    private var connectionGeneration = 0L
+    private var lastAndroidAppLaunchAt = 0L
 
     /** Launchable apps (bundle id → name); null until loaded. */
     val apps = MutableStateFlow<List<Pair<String, String>>?>(null)
@@ -158,10 +151,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             settingsRepository.themeMode.collect { themeMode.value = it }
         }
         viewModelScope.launch {
-            settingsRepository.skin.collect { skin.value = it }
-        }
-        viewModelScope.launch {
-            settingsRepository.fetchAppIcons.collect { fetchAppIcons.value = it }
+            settingsRepository.themeVariant.collect { themeVariant.value = it }
         }
         viewModelScope.launch {
             settingsRepository.hapticEnabled.collect { hapticEnabled.value = it }
@@ -173,16 +163,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             settingsRepository.introSeen.collect { introSeen.value = it }
         }
         viewModelScope.launch {
-            settingsRepository.autoCheckUpdates.collect { autoCheckUpdates.value = it }
+            settingsRepository.defaultDeviceName.collect { defaultDeviceName.value = it }
         }
         viewModelScope.launch {
-            settingsRepository.autoDownloadUpdates.collect { autoDownloadUpdates.value = it }
+            restoreSavedEndpoints()
+            maybeOpenStartupRemote()
+            if (screen.value is Screen.Startup && !hasPotentialStartupRemote()) {
+                screen.value = Screen.DeviceList
+            }
+            startScan()
         }
-        // One-shot update check on launch, if enabled.
-        viewModelScope.launch {
-            if (settingsRepository.autoCheckUpdates.first()) checkForUpdates(manual = false)
-        }
-        startScan()
     }
 
     // Settings
@@ -195,12 +185,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { settingsRepository.setThemeMode(mode) }
     }
 
-    fun setSkin(skin: AppSkin) {
-        viewModelScope.launch { settingsRepository.setSkin(skin) }
-    }
-
-    fun setFetchAppIcons(enabled: Boolean) {
-        viewModelScope.launch { settingsRepository.setFetchAppIcons(enabled) }
+    fun setThemeVariant(variant: ThemeVariant) {
+        viewModelScope.launch { settingsRepository.setThemeVariant(variant) }
     }
 
     fun setHapticEnabled(enabled: Boolean) {
@@ -215,66 +201,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { settingsRepository.setIntroSeen(true) }
     }
 
-    fun setAutoCheckUpdates(enabled: Boolean) {
-        viewModelScope.launch { settingsRepository.setAutoCheckUpdates(enabled) }
-    }
-
-    fun setAutoDownloadUpdates(enabled: Boolean) {
-        viewModelScope.launch { settingsRepository.setAutoDownloadUpdates(enabled) }
-    }
-
-    // In-app updates (GitHub Releases)
-
-    fun checkForUpdates(manual: Boolean) {
-        if (updateState.value is UpdateState.Downloading) return
-        updateJob?.cancel()
-        updateJob = viewModelScope.launch {
-            updateState.value = UpdateState.Checking(manual)
-            val info = runCatching { AppUpdater.check(BuildConfig.VERSION_NAME) }.getOrNull()
-            when {
-                info == null -> updateState.value = if (manual) UpdateState.UpToDate else UpdateState.Idle
-                autoDownloadUpdates.value -> startDownload(info)
-                else -> updateState.value = UpdateState.Available(info)
-            }
-        }
-    }
-
-    fun downloadUpdate() {
-        val info = when (val st = updateState.value) {
-            is UpdateState.Available -> st.info
-            is UpdateState.Failed -> return
-            else -> return
-        }
-        startDownload(info)
-    }
-
-    private fun startDownload(info: UpdateInfo) {
-        updateJob?.cancel()
-        updateJob = viewModelScope.launch {
-            updateState.value = UpdateState.Downloading(info, 0f)
-            runCatching {
-                AppUpdater.download(getApplication(), info) { p ->
-                    updateState.value = UpdateState.Downloading(info, p)
-                }
-            }.onSuccess { file ->
-                updateState.value = UpdateState.Ready(info, file)
-            }.onFailure {
-                updateState.value = UpdateState.Failed(it.message)
-            }
-        }
-    }
-
-    fun installUpdate() {
-        val st = updateState.value as? UpdateState.Ready ?: return
-        runCatching { AppUpdater.install(getApplication(), st.file) }
-    }
-
-    fun dismissUpdate() {
-        updateJob?.cancel()
-        updateState.value = UpdateState.Idle
+    fun setDefaultDevice(name: String) {
+        if (name !in pairedDevices.value) return
+        defaultDeviceName.value = name
+        viewModelScope.launch { settingsRepository.setDefaultDeviceName(name) }
     }
 
     fun openSettings() {
+        startupRoutingPending = false
         settingsReturnTo = screen.value
         viewModelScope.launch {
             pairedDevices.value = credentialsRepository.pairedDeviceNames().sorted()
@@ -297,20 +231,40 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 setVerify(name, DeviceVerify.Failed)
                 return@launch
             }
-            val creds = HapCredentials.parse(stored)
-            val target = discovery.resolveByName(name)
-            if (target == null) {
-                setVerify(name, DeviceVerify.Failed)
-                return@launch
+            val ok = if (stored.startsWith(ANDROID_CREDENTIAL_PREFIX)) {
+                val credential = parseAndroidCredential(stored)
+                val target = androidTvDiscovery.resolveByName(name)
+                    ?: credentialsRepository.loadEndpoint(name)?.asDiscovered(name)
+                credential != null && target != null && runCatching {
+                    val probe = AndroidTvRemoteClient(
+                        getApplication(),
+                        target.host,
+                        credential.alias,
+                        credential.fingerprint,
+                    )
+                    try {
+                        probe.connect()
+                        true
+                    } finally {
+                        probe.close()
+                    }
+                }.getOrDefault(false)
+            } else {
+                val creds = HapCredentials.parse(stored)
+                val target = discovery.resolveByName(name)
+                    ?: credentialsRepository.loadEndpoint(name)?.asDiscovered(name)
+                target != null && runCatching {
+                    val transport = SocketTransport.connect(target.host, target.port)
+                    val conn = CompanionConnection(transport)
+                    try {
+                        conn.start()
+                        PairVerify(conn, creds).verify()
+                        true
+                    } finally {
+                        conn.close()
+                    }
+                }.getOrDefault(false)
             }
-            val ok = runCatching {
-                val transport = SocketTransport.connect(target.host, target.port)
-                val conn = CompanionConnection(transport)
-                conn.start()
-                PairVerify(conn, creds).verify()
-                conn.close()
-                true
-            }.getOrDefault(false)
             setVerify(name, if (ok) DeviceVerify.Ok else DeviceVerify.Failed)
         }
     }
@@ -326,9 +280,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun forgetDeviceByName(name: String) {
         viewModelScope.launch {
+            credentialsRepository.load(name)?.let(::parseAndroidCredential)?.let {
+                AndroidTvRemoteClient.deleteIdentity(getApplication(), it.alias)
+            }
             credentialsRepository.delete(name)
             pairedDevices.value = credentialsRepository.pairedDeviceNames().sorted()
-            deviceList.value = deviceList.value.copy(pairedNames = deviceList.value.pairedNames - name)
+            deviceList.value = deviceList.value.copy(
+                devices = deviceList.value.devices.filterNot { it.name == name },
+                pairedNames = deviceList.value.pairedNames - name,
+            )
+            if (defaultDeviceName.value == name) {
+                val replacement = pairedDevices.value.firstOrNull()
+                defaultDeviceName.value = replacement
+                settingsRepository.setDefaultDeviceName(replacement)
+            }
         }
     }
 
@@ -337,27 +302,116 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val pairedNames = credentialsRepository.pairedDeviceNames().toSet()
             deviceList.value = deviceList.value.copy(scanning = true, pairedNames = pairedNames)
-            runCatching {
-                discovery.scan(durationMs = 6_000) { device ->
-                    val current = deviceList.value
-                    if (current.devices.none { it.name == device.name }) {
-                        deviceList.value = current.copy(devices = current.devices + device)
+            kotlinx.coroutines.coroutineScope {
+                launch {
+                    runCatching {
+                        discovery.scan(durationMs = 6_000) { addDiscoveredDevice(it) }
+                    }
+                }
+                launch {
+                    runCatching {
+                        androidTvDiscovery.scan(durationMs = 6_000) { addDiscoveredDevice(it) }
                     }
                 }
             }
             deviceList.value = deviceList.value.copy(scanning = false)
+            maybeOpenStartupRemote()
+            if (screen.value is Screen.Startup) screen.value = Screen.DeviceList
         }
     }
 
-    fun addManualDevice(host: String, port: Int) {
-        val device = DiscoveredAtv(name = "$host:$port", host = host, port = port, model = null)
+    private suspend fun restoreSavedEndpoints() {
+        val names = credentialsRepository.endpointDeviceNames()
+        val restored = names.mapNotNull { name ->
+            credentialsRepository.loadEndpoint(name)?.asDiscovered(name)
+        }
+        val pairedNames = credentialsRepository.pairedDeviceNames().toSet()
+        val current = deviceList.value
+        val merged = current.devices + restored.filter { saved ->
+            current.devices.none { it.name == saved.name && it.platform == saved.platform }
+        }
+        deviceList.value = current.copy(devices = merged, pairedNames = pairedNames)
+    }
+
+    private fun addDiscoveredDevice(device: DiscoveredAtv) {
+        val current = deviceList.value
+        val sameEndpoint = current.devices.firstOrNull {
+            it.platform == device.platform && it.host == device.host
+        }
+        if (sameEndpoint != null) {
+            if (sameEndpoint.direct && !device.direct) {
+                // A discovered result can refresh a manually saved Apple TV
+                // port while retaining the user's stable device name.
+                val refreshed = sameEndpoint.copy(
+                    port = device.port,
+                    pairingPort = device.pairingPort ?: sameEndpoint.pairingPort,
+                    model = device.model ?: sameEndpoint.model,
+                )
+                if (refreshed != sameEndpoint) {
+                    deviceList.value = current.copy(
+                        devices = current.devices.map {
+                            if (it === sameEndpoint) refreshed else it
+                        },
+                    )
+                    viewModelScope.launch {
+                        credentialsRepository.saveEndpoint(
+                            refreshed.name,
+                            SavedDeviceEndpoint(
+                                refreshed.platform,
+                                refreshed.host,
+                                refreshed.port,
+                                refreshed.pairingPort,
+                            ),
+                        )
+                    }
+                }
+            }
+            return
+        }
+        if (current.devices.none { it.name == device.name && it.platform == device.platform }) {
+            deviceList.value = current.copy(devices = current.devices + device)
+        }
+    }
+
+    fun addManualDevice(
+        host: String,
+        port: Int,
+        platform: TvPlatform = TvPlatform.AppleTv,
+        displayName: String? = null,
+    ) {
+        val cleanHost = host.trim().removePrefix("[").removeSuffix("]")
+        if (cleanHost.isBlank() || port !in 1..65_535) return
+        val device = DiscoveredAtv(
+            name = displayName?.trim()?.takeIf { it.isNotBlank() } ?: manualDeviceName(cleanHost, port),
+            host = cleanHost,
+            port = port,
+            model = null,
+            platform = platform,
+            pairingPort = if (platform == TvPlatform.AndroidTv) 6467 else null,
+            direct = true,
+        )
+        addDiscoveredDevice(device)
         selectDevice(device)
     }
 
     fun selectDevice(device: DiscoveredAtv) {
+        startupRoutingPending = false
         viewModelScope.launch {
+            credentialsRepository.saveEndpoint(
+                device.name,
+                SavedDeviceEndpoint(device.platform, device.host, device.port, device.pairingPort),
+            )
             val stored = credentialsRepository.load(device.name)
-            if (stored != null) {
+            if (device.platform == TvPlatform.AndroidTv) {
+                val credential = stored?.let(::parseAndroidCredential)
+                if (credential != null) {
+                    ensureDefaultForSinglePairedDevice(device.name)
+                    openAndroidRemote(device, credential)
+                } else {
+                    beginPairing(device)
+                }
+            } else if (stored != null) {
+                ensureDefaultForSinglePairedDevice(device.name)
                 openRemote(device, HapCredentials.parse(stored))
             } else {
                 beginPairing(device)
@@ -367,10 +421,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun forgetDevice(device: DiscoveredAtv) {
         viewModelScope.launch {
+            credentialsRepository.load(device.name)?.let(::parseAndroidCredential)?.let {
+                AndroidTvRemoteClient.deleteIdentity(getApplication(), it.alias)
+            }
             credentialsRepository.delete(device.name)
+            val remainingPaired = credentialsRepository.pairedDeviceNames().sorted()
+            pairedDevices.value = remainingPaired
             deviceList.value = deviceList.value.copy(
-                pairedNames = deviceList.value.pairedNames - device.name,
+                devices = deviceList.value.devices.filterNot {
+                    it.name == device.name && it.platform == device.platform
+                },
+                pairedNames = remainingPaired.toSet(),
             )
+            if (defaultDeviceName.value == device.name) {
+                val replacement = remainingPaired.firstOrNull()
+                defaultDeviceName.value = replacement
+                settingsRepository.setDefaultDeviceName(replacement)
+            }
         }
     }
 
@@ -379,12 +446,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun beginPairing(device: DiscoveredAtv) {
         screen.value = Screen.Pairing(device)
         pairing.value = PairingUi(working = true)
+        if (device.platform == TvPlatform.AndroidTv) {
+            val alias = "androidtv_${UUID.randomUUID().toString().replace("-", "")}"
+            val session = AndroidTvPairingSession(
+                getApplication(),
+                device.host,
+                device.pairingPort ?: 6467,
+                alias,
+            )
+            androidPairing = session
+            try {
+                session.begin()
+                pairing.value = PairingUi(awaitingPin = true, working = false)
+            } catch (e: Exception) {
+                session.cancel()
+                androidPairing = null
+                pairing.value = PairingUi(working = false, error = friendlyError(e))
+            }
+            return
+        }
         try {
             val transport = SocketTransport.connect(device.host, device.port)
             val connection = CompanionConnection(transport)
             connection.start()
             pairingConnection = connection
-            val setup = PairSetup(connection, name = "CyberRemote")
+            val setup = PairSetup(connection, name = "LocalBeam")
             setup.startPairing()
             pairSetup = setup
             pairing.value = PairingUi(awaitingPin = true, working = false)
@@ -395,12 +481,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun submitPin(pin: String) {
         val device = (screen.value as? Screen.Pairing)?.device ?: return
+        if (device.platform == TvPlatform.AndroidTv) {
+            val session = androidPairing ?: return
+            viewModelScope.launch {
+                pairing.value = pairing.value.copy(working = true, error = null)
+                try {
+                    val credential = session.finish(pin)
+                    credentialsRepository.save(device.name, ANDROID_CREDENTIAL_PREFIX + credential)
+                    ensureDefaultForSinglePairedDevice(device.name)
+                    androidPairing = null
+                    openAndroidRemote(device, parseAndroidCredential(ANDROID_CREDENTIAL_PREFIX + credential)!!)
+                } catch (e: Exception) {
+                    session.cancel()
+                    androidPairing = null
+                    pairing.value = PairingUi(working = false, error = friendlyError(e))
+                }
+            }
+            return
+        }
         val setup = pairSetup ?: return
         viewModelScope.launch {
             pairing.value = pairing.value.copy(working = true, error = null)
             try {
                 val credentials = setup.finishPairing(pin)
                 credentialsRepository.save(device.name, credentials.toString())
+                ensureDefaultForSinglePairedDevice(device.name)
                 pairingConnection?.close()
                 pairingConnection = null
                 pairSetup = null
@@ -418,6 +523,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         pairingConnection?.close()
         pairingConnection = null
         pairSetup = null
+        androidPairing?.cancel()
+        androidPairing = null
         screen.value = Screen.DeviceList
     }
 
@@ -425,12 +532,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun openRemote(device: DiscoveredAtv, credentials: HapCredentials) {
         activeDeviceName.value = device.name
+        apps.value = null
+        appsError.value = null
+        keyboardFocus.value = KeyboardFocusState.Unknown
+        keyboardText.value = ""
         screen.value = Screen.Remote(device)
         connect(device, credentials)
     }
 
+    private fun openAndroidRemote(device: DiscoveredAtv, credential: AndroidTvCredential) {
+        activeDeviceName.value = device.name
+        apps.value = null
+        appsError.value = null
+        keyboardFocus.value = KeyboardFocusState.Unknown
+        keyboardText.value = ""
+        screen.value = Screen.Remote(device)
+        connectAndroid(device, credential)
+    }
+
     private fun connect(device: DiscoveredAtv, credentials: HapCredentials) {
+        val generation = ++connectionGeneration
         reconnectJob?.cancel()
+        client?.close()
+        client = null
+        androidClient?.close()
+        androidClient = null
         reconnectJob = viewModelScope.launch {
             connectionState.value = ConnectionState.Connecting
             connectionError.value = null
@@ -443,31 +569,209 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 if (attempt > 0) delay(RECONNECT_DELAY_MS)
                 // The Companion port changes across reboots: re-resolve first,
                 // falling back to the last known host/port (manual entry).
-                val target = discovery.resolveByName(device.name) ?: device
+                val target = if (device.direct) {
+                    device
+                } else {
+                    discovery.resolveByName(device.name) ?: device
+                }
+                var candidate: CompanionClient? = null
                 try {
                     val transport = SocketTransport.connect(target.host, target.port)
-                    val newClient = CompanionClient(CompanionConnection(transport), credentials)
-                    newClient.connect()
+                    val connection = CompanionConnection(transport)
+                    val newClient = CompanionClient(connection, credentials)
+                    candidate = newClient
+                    connection.onDisconnected = { error ->
+                        viewModelScope.launch {
+                            handleRemoteFailure(error, newClient, generation)
+                        }
+                    }
+                    // Publish before the handshake completes so an EOF during
+                    // verification cannot be mistaken for a healthy session.
                     client = newClient
+                    newClient.connect()
+                    if (generation != connectionGeneration) {
+                        candidate?.close()
+                        return@launch
+                    }
+                    check(client === newClient) { "connection closed during verification" }
+                    candidate = null
                     connectionState.value = ConnectionState.Connected
                     observeKeyboard(newClient)
-                    consumeTouchEvents(newClient)
+                    consumeTouchEvents(newClient, generation)
                     return@launch
                 } catch (e: Exception) {
+                    // Pair-verify can fail after the socket has been opened.
+                    // Always close that attempt before retrying.
+                    candidate?.close()
                     client = null
                     lastError = e
                 }
             }
+            if (generation != connectionGeneration) return@launch
             connectionState.value = ConnectionState.Disconnected
             connectionError.value = friendlyError(lastError ?: java.io.IOException("connect failed"))
         }
     }
 
+    /** Rename a saved TV without losing its encrypted credentials or endpoint. */
+    fun renameDeviceByName(oldName: String, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isBlank() || trimmed == oldName) return
+        viewModelScope.launch {
+            if (!credentialsRepository.rename(oldName, trimmed)) return@launch
+            pairedDevices.value = credentialsRepository.pairedDeviceNames().sorted()
+            deviceList.value = deviceList.value.copy(
+                devices = deviceList.value.devices.map { device ->
+                    if (device.name == oldName) device.copy(name = trimmed) else device
+                },
+                pairedNames = deviceList.value.pairedNames
+                    .map { if (it == oldName) trimmed else it }
+                    .toSet(),
+            )
+            if (activeDeviceName.value == oldName) activeDeviceName.value = trimmed
+            if (defaultDeviceName.value == oldName) {
+                defaultDeviceName.value = trimmed
+                settingsRepository.setDefaultDeviceName(trimmed)
+            }
+            val renamedReturn = when (val current = settingsReturnTo) {
+                is Screen.Pairing -> if (current.device.name == oldName) {
+                    Screen.Pairing(current.device.copy(name = trimmed))
+                } else current
+                is Screen.Remote -> if (current.device.name == oldName) {
+                    Screen.Remote(current.device.copy(name = trimmed))
+                } else current
+                else -> current
+            }
+            settingsReturnTo = renamedReturn
+            screen.value = when (val current = screen.value) {
+                is Screen.Pairing -> if (current.device.name == oldName) {
+                    Screen.Pairing(current.device.copy(name = trimmed))
+                } else current
+                is Screen.Remote -> if (current.device.name == oldName) {
+                    Screen.Remote(current.device.copy(name = trimmed))
+                } else current
+                else -> current
+            }
+        }
+    }
+
+    private fun connectAndroid(device: DiscoveredAtv, credential: AndroidTvCredential) {
+        val generation = ++connectionGeneration
+        reconnectJob?.cancel()
+        client?.close()
+        client = null
+        androidClient?.close()
+        androidClient = null
+        reconnectJob = viewModelScope.launch {
+            connectionState.value = ConnectionState.Connecting
+            connectionError.value = null
+            var lastError: Exception? = null
+            repeat(RECONNECT_ATTEMPTS) { attempt ->
+                if (attempt > 0) delay(RECONNECT_DELAY_MS)
+                val target = if (device.direct) {
+                    device
+                } else {
+                    androidTvDiscovery.resolveByName(device.name) ?: device
+                }
+                var candidate: AndroidTvRemoteClient? = null
+                try {
+                    val newClient = AndroidTvRemoteClient(
+                        getApplication(),
+                        target.host,
+                        credential.alias,
+                        credential.fingerprint,
+                    )
+                    candidate = newClient
+                    newClient.onDisconnected = { error ->
+                        viewModelScope.launch {
+                            handleAndroidDisconnect(error, newClient, generation)
+                        }
+                    }
+                    // Publish before the first configure/ping response so a
+                    // fast remote close cannot leave a stale Connected label.
+                    androidClient = newClient
+                    newClient.connect()
+                    if (generation != connectionGeneration) {
+                        newClient.close()
+                        return@launch
+                    }
+                    check(androidClient === newClient) { "connection closed during verification" }
+                    connectionState.value = ConnectionState.Connected
+                    observeAndroidKeyboard(newClient)
+                    return@launch
+                } catch (e: Exception) {
+                    // The client is local to this attempt until connect succeeds.
+                    // Close it explicitly so a failed TLS handshake cannot leak its socket.
+                    candidate?.close()
+                    androidClient?.close()
+                    androidClient = null
+                    lastError = e
+                }
+            }
+            if (generation != connectionGeneration) return@launch
+            connectionState.value = ConnectionState.Disconnected
+            connectionError.value = friendlyError(lastError ?: java.io.IOException("connect failed"))
+        }
+    }
+
+    /** Opens the saved default, or the only paired TV, on a fresh app start. */
+    private suspend fun maybeOpenStartupRemote() {
+        if (!startupRoutingPending) return
+        if (screen.value !is Screen.DeviceList && screen.value !is Screen.Startup) return
+        val pairedNames = credentialsRepository.pairedDeviceNames().sorted()
+        if (pairedNames.isEmpty()) return
+
+        val savedDefault = settingsRepository.defaultDeviceName.first()
+        val targetName = when {
+            savedDefault != null && savedDefault in pairedNames -> savedDefault
+            pairedNames.size == 1 -> pairedNames.single()
+            else -> return
+        }
+        val device = deviceList.value.devices.firstOrNull { it.name == targetName } ?: return
+        val stored = credentialsRepository.load(targetName) ?: return
+
+        startupRoutingPending = false
+        if (pairedNames.size == 1 && savedDefault != targetName) {
+            defaultDeviceName.value = targetName
+            settingsRepository.setDefaultDeviceName(targetName)
+        }
+        if (device.platform == TvPlatform.AndroidTv) {
+            parseAndroidCredential(stored)?.let { openAndroidRemote(device, it) }
+        } else {
+            openRemote(device, HapCredentials.parse(stored))
+        }
+    }
+
+    private suspend fun hasPotentialStartupRemote(): Boolean {
+        val pairedNames = credentialsRepository.pairedDeviceNames().sorted()
+        if (pairedNames.isEmpty()) return false
+        val savedDefault = settingsRepository.defaultDeviceName.first()
+        return pairedNames.size == 1 || (savedDefault != null && savedDefault in pairedNames)
+    }
+
+    private suspend fun ensureDefaultForSinglePairedDevice(name: String) {
+        if (credentialsRepository.pairedDeviceNames().size != 1) return
+        if (settingsRepository.defaultDeviceName.first() != null) return
+        defaultDeviceName.value = name
+        settingsRepository.setDefaultDeviceName(name)
+    }
+
     fun reconnect() {
         val device = (screen.value as? Screen.Remote)?.device ?: return
+        connectionState.value = ConnectionState.Connecting
+        connectionError.value = null
         viewModelScope.launch {
-            val stored = credentialsRepository.load(device.name) ?: return@launch
-            connect(device, HapCredentials.parse(stored))
+            val stored = credentialsRepository.load(device.name)
+            if (stored == null) {
+                connectionState.value = ConnectionState.Disconnected
+                connectionError.value = strings.connectionLost
+                return@launch
+            }
+            if (device.platform == TvPlatform.AndroidTv) {
+                parseAndroidCredential(stored)?.let { connectAndroid(device, it) }
+            } else {
+                connect(device, HapCredentials.parse(stored))
+            }
         }
     }
 
@@ -479,44 +783,153 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeRemote() {
+        startupRoutingPending = false
         reconnectJob?.cancel()
+        connectionGeneration++
         val current = client
         client = null
+        val currentAndroid = androidClient
+        androidClient = null
         connectionState.value = ConnectionState.Disconnected
+        keyboardFocus.value = KeyboardFocusState.Unknown
+        keyboardText.value = ""
         activeDeviceName.value = null
         viewModelScope.launch { runCatching { current?.disconnect() } }
+        currentAndroid?.close()
         screen.value = Screen.DeviceList
     }
 
     /** Run a remote-control action, flipping to Disconnected on I/O errors. */
     fun withClient(block: suspend (CompanionClient) -> Unit) {
         val current = client ?: return
+        val generation = connectionGeneration
         viewModelScope.launch {
             try {
                 block(current)
             } catch (e: Exception) {
-                connectionState.value = ConnectionState.Disconnected
-                connectionError.value = friendlyError(e)
+                handleRemoteFailure(e, current, generation)
             }
         }
     }
 
-    fun pressButton(command: HidCommand) = withClient { it.pressButton(command) }
+    private fun handleRemoteFailure(error: Throwable, source: Any? = null, generation: Long? = null) {
+        if (generation != null && generation != connectionGeneration) return
+        if (source != null && source !== client && source !== androidClient) return
+        val current = client
+        client = null
+        val currentAndroid = androidClient
+        androidClient = null
+        touchJob?.cancel()
+        keyboardFocusJob?.cancel()
+        androidKeyboardTextJob?.cancel()
+        textSyncJob?.cancel()
+        keyboardFocus.value = KeyboardFocusState.Unknown
+        keyboardText.value = ""
+        current?.close()
+        currentAndroid?.close()
+        connectionState.value = ConnectionState.Disconnected
+        connectionError.value = friendlyError(error as? Exception ?: Exception(error))
+    }
 
-    fun holdButton(command: HidCommand) = withClient { it.holdButton(command) }
+    /**
+     * Some Android TV Remote Service builds close the control socket while
+     * handling an app-link launch. Reconnect that short-lived transport event
+     * instead of exposing the raw EOFException or leaving the UI stale.
+     */
+    private fun handleAndroidDisconnect(
+        error: Throwable,
+        source: AndroidTvRemoteClient,
+        generation: Long,
+    ) {
+        val elapsed = System.currentTimeMillis() - lastAndroidAppLaunchAt
+        val isExpectedAppLaunchClose =
+            generation == connectionGeneration &&
+                source === androidClient &&
+                elapsed in 0..APP_LAUNCH_RECOVERY_WINDOW_MS &&
+                error is java.io.IOException
+        handleRemoteFailure(error, source, generation)
+        if (isExpectedAppLaunchClose) reconnect()
+    }
+
+    fun pressButton(command: HidCommand) {
+        val currentAndroid = androidClient
+        if (currentAndroid != null) {
+            viewModelScope.launch {
+                runCatching { currentAndroid.pressButton(command) }
+                    .onFailure { handleRemoteFailure(it, currentAndroid, connectionGeneration) }
+            }
+        } else {
+            withClient { it.pressButton(command) }
+        }
+    }
+
+    fun pressAndroidButton(command: AndroidTvButton) {
+        val currentAndroid = androidClient ?: return
+        viewModelScope.launch {
+            runCatching { currentAndroid.pressButton(command) }
+                .onFailure { handleRemoteFailure(it, currentAndroid, connectionGeneration) }
+        }
+    }
+
+    fun holdButton(command: HidCommand) {
+        val currentAndroid = androidClient
+        if (currentAndroid != null) {
+            viewModelScope.launch {
+                runCatching { currentAndroid.holdButton(command) }
+                    .onFailure { handleRemoteFailure(it, currentAndroid, connectionGeneration) }
+            }
+        } else {
+            withClient { it.holdButton(command) }
+        }
+    }
 
     // Keyboard (M6): mirror the phone's edit buffer to the TV field
 
+    /** Refresh the TV-side text session without requiring a fresh focus event. */
+    fun requestKeyboardFocus() {
+        val currentAndroid = androidClient
+        if (currentAndroid != null) {
+            keyboardFocus.value = currentAndroid.keyboardFocus.value
+            return
+        }
+        val current = client ?: return
+        val generation = connectionGeneration
+        viewModelScope.launch {
+            runCatching { current.textGet() }
+                .onSuccess { value ->
+                    if (value != null) {
+                        keyboardText.value = value
+                        keyboardFocus.value = KeyboardFocusState.Focused
+                    }
+                }
+                .onFailure { handleRemoteFailure(it, current, generation) }
+        }
+    }
+
     private fun observeKeyboard(newClient: CompanionClient) {
         keyboardFocusJob?.cancel()
+        androidKeyboardTextJob?.cancel()
         keyboardFocusJob = viewModelScope.launch {
             newClient.keyboardFocus.collect { state ->
                 keyboardFocus.value = state
                 if (state == KeyboardFocusState.Focused) {
                     // Pre-fill the edit buffer with what's already in the field
-                    runCatching { newClient.textGet() }.getOrNull()?.let { keyboardText.value = it }
+                    runCatching { newClient.textGet() }
+                        .onSuccess { value -> value?.let { keyboardText.value = it } }
+                        .onFailure { handleRemoteFailure(it, newClient, connectionGeneration) }
                 }
             }
+        }
+    }
+
+    private fun observeAndroidKeyboard(newClient: AndroidTvRemoteClient) {
+        keyboardFocusJob?.cancel()
+        androidKeyboardTextJob?.cancel()
+        keyboardFocusJob = viewModelScope.launch {
+            newClient.keyboardFocus.collect { keyboardFocus.value = it }
+        }
+        androidKeyboardTextJob = viewModelScope.launch {
+            newClient.keyboardText.collect { keyboardText.value = it }
         }
     }
 
@@ -530,15 +943,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         textSyncJob?.cancel()
         textSyncJob = viewModelScope.launch {
             delay(250)
+            val currentAndroid = androidClient
+            if (currentAndroid != null) {
+                runCatching { currentAndroid.textSet(text) }
+                    .onFailure { handleRemoteFailure(it, currentAndroid, connectionGeneration) }
+                return@launch
+            }
             val current = client ?: return@launch
+            val generation = connectionGeneration
             runCatching { current.textSet(text) }
+                .onFailure { handleRemoteFailure(it, current, generation) }
         }
     }
 
     fun clearKeyboardText() {
         keyboardText.value = ""
         textSyncJob?.cancel()
-        withClient { it.textClear() }
+        val currentAndroid = androidClient
+        if (currentAndroid != null) {
+            viewModelScope.launch {
+                runCatching { currentAndroid.textClear() }
+                    .onFailure { handleRemoteFailure(it, currentAndroid, connectionGeneration) }
+            }
+        } else {
+            withClient { it.textClear() }
+        }
     }
 
     /**
@@ -550,16 +979,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (text.isBlank()) return
         keyboardText.value = text
         textSyncJob?.cancel()
-        withClient { it.textSet(text) }
+        val currentAndroid = androidClient
+        if (currentAndroid != null) {
+            viewModelScope.launch {
+                runCatching { currentAndroid.textSet(text) }
+                    .onFailure { handleRemoteFailure(it, currentAndroid, connectionGeneration) }
+            }
+        } else {
+            withClient { it.textSet(text) }
+        }
     }
 
     // Touchpad (M7)
 
-    private fun consumeTouchEvents(newClient: CompanionClient) {
+    private fun consumeTouchEvents(newClient: CompanionClient, generation: Long) {
         touchJob?.cancel()
         touchJob = viewModelScope.launch {
             for ((x, y, phase) in touchEvents) {
                 runCatching { newClient.touchEvent(x, y, phase) }
+                    .onFailure { handleRemoteFailure(it, newClient, generation) }
             }
         }
     }
@@ -574,42 +1012,119 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         touchEvents.trySend(Triple(x, y, phase))
     }
 
-    fun touchTap() = withClient { it.tap() }
+    fun touchTap() {
+        val currentAndroid = androidClient
+        if (currentAndroid != null) {
+            viewModelScope.launch {
+                runCatching { currentAndroid.touchTap() }
+                    .onFailure { handleRemoteFailure(it, currentAndroid, connectionGeneration) }
+            }
+        } else {
+            withClient { it.tap() }
+        }
+    }
 
     // Apps (M7)
 
     fun loadApps(force: Boolean = false) {
         if (apps.value != null && !force) return
         appsError.value = null
+        val currentAndroid = androidClient
+        if (currentAndroid != null) {
+            apps.value = currentAndroid.appList().toList()
+                .sortedBy { it.second.lowercase() }
+            return
+        }
         withClient { current ->
-            runCatching { current.appList() }
-                .onSuccess { list ->
-                    apps.value = list.toList().sortedBy { it.second.lowercase() }
-                }
-                .onFailure { appsError.value = it.message }
+            try {
+                apps.value = current.appList().toList().sortedBy { it.second.lowercase() }
+            } catch (e: Exception) {
+                appsError.value = e.message
+                throw e
+            }
         }
     }
 
-    fun launchApp(bundleId: String) = withClient { it.launchApp(bundleId) }
+    fun launchApp(bundleId: String) {
+        val currentAndroid = androidClient
+        if (currentAndroid != null) {
+            lastAndroidAppLaunchAt = System.currentTimeMillis()
+            viewModelScope.launch {
+                runCatching { currentAndroid.launchApp(bundleId) }
+                    .onFailure { handleAndroidDisconnect(it, currentAndroid, connectionGeneration) }
+            }
+        } else {
+            withClient { it.launchApp(bundleId) }
+        }
+    }
 
-    fun wake() = withClient { it.wake() }
+    fun wake() {
+        val currentAndroid = androidClient
+        if (currentAndroid != null) {
+            viewModelScope.launch {
+                runCatching { currentAndroid.wake() }
+                    .onFailure { handleRemoteFailure(it, currentAndroid, connectionGeneration) }
+            }
+        } else {
+            withClient { it.wake() }
+        }
+    }
 
-    fun sleep() = withClient { it.sleep() }
+    fun sleep() {
+        val currentAndroid = androidClient
+        if (currentAndroid != null) {
+            viewModelScope.launch {
+                runCatching { currentAndroid.sleep() }
+                    .onFailure { handleRemoteFailure(it, currentAndroid, connectionGeneration) }
+            }
+        } else {
+            withClient { it.sleep() }
+        }
+    }
 
     private fun friendlyError(e: Exception): String = when {
         e.message?.contains("proof mismatch") == true -> strings.wrongPin
         e.message?.contains("ECONNREFUSED") == true || e is java.net.ConnectException -> strings.atvUnreachable
         e is java.net.SocketTimeoutException -> strings.connectionTimedOut
+        e is java.io.EOFException || e.message?.contains("EOF", ignoreCase = true) == true -> strings.connectionLost
         else -> e.message ?: e.javaClass.simpleName
     }
 
     override fun onCleared() {
         pairingConnection?.close()
+        androidPairing?.cancel()
         client?.close()
+        androidClient?.close()
     }
 
     private companion object {
+        const val ANDROID_CREDENTIAL_PREFIX = "androidtv|"
         const val RECONNECT_ATTEMPTS = 3
         const val RECONNECT_DELAY_MS = 500L
+        const val APP_LAUNCH_RECOVERY_WINDOW_MS = 5_000L
     }
+}
+
+private data class AndroidTvCredential(val alias: String, val fingerprint: String?)
+
+private fun SavedDeviceEndpoint.asDiscovered(name: String): DiscoveredAtv = DiscoveredAtv(
+    name = name,
+    host = host,
+    port = port,
+    model = null,
+    platform = platform,
+    pairingPort = pairingPort,
+    direct = true,
+)
+
+private fun manualDeviceName(host: String, port: Int): String {
+    val displayHost = if (host.contains(':') && !host.startsWith('[')) "[$host]" else host
+    return "$displayHost:$port"
+}
+
+private fun parseAndroidCredential(value: String): AndroidTvCredential? {
+    if (!value.startsWith("androidtv|")) return null
+    val parts = value.removePrefix("androidtv|").split('|', limit = 2)
+    if (parts[0].isBlank()) return null
+    return AndroidTvCredential(parts[0], parts.getOrNull(1)?.takeIf { it.isNotBlank() })
 }

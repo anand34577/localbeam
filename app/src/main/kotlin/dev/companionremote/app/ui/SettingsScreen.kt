@@ -1,9 +1,6 @@
 package dev.companionremote.app.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,50 +17,43 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
-import androidx.compose.material.icons.rounded.MailOutline
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.companionremote.app.AppViewModel
 import dev.companionremote.app.DeviceVerify
-import dev.companionremote.app.R
-import dev.companionremote.app.data.AppSkin
 import dev.companionremote.app.data.HapticStrength
 import dev.companionremote.app.data.ThemeMode
 import dev.companionremote.app.i18n.AppLanguage
-import dev.companionremote.app.i18n.FEEDBACK_EMAIL
 import dev.companionremote.app.i18n.LocalAppStrings
-import dev.companionremote.app.theme.skinAccentPreview
-import kotlinx.coroutines.launch
+import dev.companionremote.app.theme.ThemeVariant
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,26 +61,23 @@ fun SettingsScreen(viewModel: AppViewModel) {
     val s = LocalAppStrings.current
     val language by viewModel.language.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
-    val skin by viewModel.skin.collectAsState()
-    val fetchIcons by viewModel.fetchAppIcons.collectAsState()
+    val themeVariant by viewModel.themeVariant.collectAsState()
     val hapticEnabled by viewModel.hapticEnabled.collectAsState()
     val hapticStrength by viewModel.hapticStrength.collectAsState()
-    val autoCheckUpdates by viewModel.autoCheckUpdates.collectAsState()
-    val autoDownloadUpdates by viewModel.autoDownloadUpdates.collectAsState()
     val paired by viewModel.pairedDevices.collectAsState()
+    val defaultDevice by viewModel.defaultDeviceName.collectAsState()
     val activeDevice by viewModel.activeDeviceName.collectAsState()
     val deviceVerify by viewModel.deviceVerify.collectAsState()
-    val clipboard = LocalClipboardManager.current
-    val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
+    var renameTarget by remember { mutableStateOf<String?>(null) }
     val previewHaptic = rememberHapticPreview()
 
     Scaffold(
-        containerColor = androidx.compose.ui.graphics.Color.Transparent,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
                 title = { Text(s.settings, fontWeight = FontWeight.SemiBold) },
                 navigationIcon = {
                     IconButton(onClick = { viewModel.closeSettings() }) {
@@ -118,9 +105,12 @@ fun SettingsScreen(viewModel: AppViewModel) {
                     paired.forEach { name ->
                         PairedDeviceRow(
                             name = name,
+                            isDefault = name == defaultDevice || (paired.size == 1 && defaultDevice == null),
                             inUse = name == activeDevice,
                             verify = deviceVerify[name] ?: DeviceVerify.Idle,
                             onRefresh = { viewModel.verifyDevice(name) },
+                            onSetDefault = { viewModel.setDefaultDevice(name) },
+                            onRename = { renameTarget = name },
                             onForget = { viewModel.forgetDeviceByName(name) },
                         )
                     }
@@ -134,18 +124,28 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 OptionRow(s.themeLight, themeMode == ThemeMode.Light) { viewModel.setThemeMode(ThemeMode.Light) }
                 OptionRow(s.themeDark, themeMode == ThemeMode.Dark) { viewModel.setThemeMode(ThemeMode.Dark) }
             }
-
-            // Skin
-            SectionTitle(s.skin)
+            SectionTitle(s.colorTheme)
             SettingsCard {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                ) {
-                    SkinSwatch(s.skinMidnight, AppSkin.Midnight, skin) { viewModel.setSkin(AppSkin.Midnight) }
-                    SkinSwatch(s.skinGraphite, AppSkin.Graphite, skin) { viewModel.setSkin(AppSkin.Graphite) }
-                    SkinSwatch(s.skinAurora, AppSkin.Aurora, skin) { viewModel.setSkin(AppSkin.Aurora) }
-                    SkinSwatch(s.skinSunset, AppSkin.Sunset, skin) { viewModel.setSkin(AppSkin.Sunset) }
+                OptionRow(s.themeLocalBeam, themeVariant == ThemeVariant.LocalBeam) {
+                    viewModel.setThemeVariant(ThemeVariant.LocalBeam)
+                }
+                OptionRow(s.themeGraphite, themeVariant == ThemeVariant.Graphite) {
+                    viewModel.setThemeVariant(ThemeVariant.Graphite)
+                }
+                OptionRow(s.themeEmber, themeVariant == ThemeVariant.Ember) {
+                    viewModel.setThemeVariant(ThemeVariant.Ember)
+                }
+                OptionRow(s.themeMidnight, themeVariant == ThemeVariant.Midnight) {
+                    viewModel.setThemeVariant(ThemeVariant.Midnight)
+                }
+                OptionRow(s.themeOcean, themeVariant == ThemeVariant.Ocean) {
+                    viewModel.setThemeVariant(ThemeVariant.Ocean)
+                }
+                OptionRow(s.themeForest, themeVariant == ThemeVariant.Forest) {
+                    viewModel.setThemeVariant(ThemeVariant.Forest)
+                }
+                OptionRow(s.themeRose, themeVariant == ThemeVariant.Rose) {
+                    viewModel.setThemeVariant(ThemeVariant.Rose)
                 }
             }
 
@@ -192,88 +192,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 OptionRow(s.languageSystem, language == AppLanguage.System) { viewModel.setLanguage(AppLanguage.System) }
                 OptionRow(s.languageEnglish, language == AppLanguage.English) { viewModel.setLanguage(AppLanguage.English) }
                 OptionRow(s.languageChinese, language == AppLanguage.Chinese) { viewModel.setLanguage(AppLanguage.Chinese) }
-            }
-
-            // App icons (network opt-in)
-            SectionTitle(s.tabApps)
-            SettingsCard {
-                Row(
-                    Modifier.fillMaxWidth().padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                        Text(s.appIcons, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                        Text(
-                            s.appIconsDesc,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(checked = fetchIcons, onCheckedChange = { viewModel.setFetchAppIcons(it) })
-                }
-            }
-
-            // Feedback
-            SectionTitle(s.sendFeedback)
-            SettingsCard {
-                Row(
-                    Modifier.fillMaxWidth().clickable {
-                        clipboard.setText(AnnotatedString(FEEDBACK_EMAIL))
-                        scope.launch { snackbarHostState.showMessage(s.emailCopied) }
-                    }.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        Modifier.size(40.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Rounded.MailOutline,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                        )
-                    }
-                    Column(Modifier.padding(start = 16.dp).weight(1f)) {
-                        Text(FEEDBACK_EMAIL, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                        Text(
-                            s.feedbackDesc,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Icon(Icons.Rounded.ContentCopy, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-
-            // Updates
-            SectionTitle(s.updates)
-            SettingsCard {
-                ToggleRow(
-                    title = s.autoCheckUpdates,
-                    desc = s.autoCheckUpdatesDesc,
-                    checked = autoCheckUpdates,
-                    onCheckedChange = { viewModel.setAutoCheckUpdates(it) },
-                )
-                ToggleRow(
-                    title = s.autoDownloadUpdates,
-                    desc = s.autoDownloadUpdatesDesc,
-                    checked = autoDownloadUpdates,
-                    onCheckedChange = { viewModel.setAutoDownloadUpdates(it) },
-                )
-                Row(
-                    Modifier.fillMaxWidth().clickable { viewModel.checkForUpdates(manual = true) }
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(s.checkNow, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                        Text(
-                            s.currentVersion.format(dev.companionremote.app.BuildConfig.VERSION_NAME),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+                OptionRow(s.languageHindi, language == AppLanguage.Hindi) { viewModel.setLanguage(AppLanguage.Hindi) }
             }
 
             // About
@@ -290,14 +209,25 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
             )
+            Text(
+                s.repository,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+            )
             Spacer(Modifier.height(24.dp))
         }
     }
-}
-
-private suspend fun SnackbarHostState.showMessage(message: String) {
-    currentSnackbarData?.dismiss()
-    showSnackbar(message)
+    renameTarget?.let { currentName ->
+        RenameDialog(
+            currentName = currentName,
+            onDismiss = { renameTarget = null },
+            onSave = { newName ->
+                viewModel.renameDeviceByName(currentName, newName)
+                renameTarget = null
+            },
+        )
+    }
 }
 
 @Composable
@@ -316,6 +246,7 @@ private fun SettingsCard(content: @Composable androidx.compose.foundation.layout
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(vertical = 4.dp), content = content)
@@ -334,14 +265,15 @@ private fun OptionRow(label: String, selected: Boolean, onSelect: () -> Unit) {
     }
 }
 
-private val PairedOkGreen = Color(0xFF34C759)
-
 @Composable
 private fun PairedDeviceRow(
     name: String,
+    isDefault: Boolean,
     inUse: Boolean,
     verify: DeviceVerify,
     onRefresh: () -> Unit,
+    onSetDefault: () -> Unit,
+    onRename: () -> Unit,
     onForget: () -> Unit,
 ) {
     val s = LocalAppStrings.current
@@ -350,7 +282,7 @@ private fun PairedDeviceRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            painterResource(R.drawable.ic_apple),
+            Icons.Rounded.Tv,
             contentDescription = null,
             Modifier.size(22.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -360,7 +292,7 @@ private fun PairedDeviceRow(
                 Text(name, style = MaterialTheme.typography.bodyLarge)
                 if (verify == DeviceVerify.Ok) {
                     Spacer(Modifier.size(8.dp))
-                    Box(Modifier.size(9.dp).clip(CircleShape).background(PairedOkGreen))
+                    Box(Modifier.size(9.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
                 }
             }
             when {
@@ -370,10 +302,15 @@ private fun PairedDeviceRow(
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Medium,
                 )
+                isDefault -> Text(
+                    s.defaultRemote,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
                 verify == DeviceVerify.Ok -> Text(
                     s.paired,
                     style = MaterialTheme.typography.labelSmall,
-                    color = PairedOkGreen,
+                    color = MaterialTheme.colorScheme.primary,
                 )
                 verify == DeviceVerify.Failed -> Text(
                     s.atvUnreachable,
@@ -382,6 +319,7 @@ private fun PairedDeviceRow(
                 )
             }
         }
+        RadioButton(selected = isDefault, onClick = onSetDefault)
         if (verify == DeviceVerify.Checking) {
             Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -391,9 +329,13 @@ private fun PairedDeviceRow(
                 Icon(
                     Icons.Rounded.Refresh,
                     contentDescription = s.checkNow,
-                    tint = if (verify == DeviceVerify.Ok) PairedOkGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = if (verify == DeviceVerify.Ok) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+        IconButton(onClick = onRename) {
+            Icon(Icons.Rounded.Edit, contentDescription = s.edit, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         IconButton(onClick = onForget) {
             Icon(Icons.Rounded.DeleteOutline, contentDescription = s.forget, tint = MaterialTheme.colorScheme.error)
@@ -420,30 +362,26 @@ private fun ToggleRow(title: String, desc: String, checked: Boolean, onCheckedCh
 }
 
 @Composable
-private fun SkinSwatch(label: String, skin: AppSkin, current: AppSkin, onSelect: () -> Unit) {
-    val selected = skin == current
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clickable(onClick = onSelect).padding(4.dp),
-    ) {
-        Box(
-            Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(skinAccentPreview(skin))
-                .border(
-                    width = if (selected) 3.dp else 1.dp,
-                    color = if (selected) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.outlineVariant,
-                    shape = CircleShape,
-                ),
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-        )
-    }
+private fun RenameDialog(currentName: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    val s = LocalAppStrings.current
+    var name by remember(currentName) { mutableStateOf(currentName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(s.renameDevice) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text(s.deviceName) },
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(
+                enabled = name.trim().isNotBlank(),
+                onClick = { onSave(name) },
+            ) { Text(s.save) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(s.cancel) } },
+    )
 }

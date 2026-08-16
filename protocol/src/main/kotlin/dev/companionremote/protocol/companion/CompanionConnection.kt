@@ -60,12 +60,17 @@ class CompanionConnection(
 
     @Volatile
     private var cipher: SessionCipher? = null
+    @Volatile
+    private var locallyClosed = false
     private var xid: Long = Random.nextLong(0, 1 shl 16)
     private var closed = false
     private var closeCause: Throwable? = null
 
     // Response waiters: key is either a Long XID or a FrameType (auth frames)
     private val waiters = mutableMapOf<Any, CompletableDeferred<Map<Any?, Any?>>>()
+
+    /** Called when the peer or transport drops unexpectedly. */
+    var onDisconnected: ((Throwable) -> Unit)? = null
 
     private val _events = MutableSharedFlow<CompanionEvent>(
         extraBufferCapacity = 64,
@@ -236,24 +241,26 @@ class CompanionConnection(
     }
 
     private fun shutdown(cause: Throwable) {
-        val pending = synchronized(lock) {
+        val result = synchronized(lock) {
             if (closed) return
             closed = true
             closeCause = cause
             val list = waiters.values.toList()
             waiters.clear()
-            list
+            (!locallyClosed) to list
         }
-        for (waiter in pending) {
+        for (waiter in result.second) {
             waiter.completeExceptionally(
                 CompanionConnectionClosedException("connection closed", cause),
             )
         }
         transport.close()
+        if (result.first) onDisconnected?.invoke(cause)
     }
 
     /** Close the connection and cancel all pending exchanges. */
     fun close() {
+        locallyClosed = true
         shutdown(CompanionConnectionClosedException("closed by client"))
         scope.cancel()
     }

@@ -23,7 +23,7 @@ class PairingException(message: String) : CompanionException(message)
  */
 class PairSetup(
     private val connection: CompanionConnection,
-    private val name: String = "CyberRemote",
+    private val name: String = "LocalBeam",
 ) {
     private var atvSalt: ByteArray? = null
     private var atvPublicKey: ByteArray? = null

@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import dev.companionremote.app.AppViewModel
 import dev.companionremote.app.discovery.DiscoveredAtv
+import dev.companionremote.app.discovery.TvPlatform
 import dev.companionremote.app.i18n.LocalAppStrings
 
 @Composable
@@ -39,6 +40,8 @@ fun PairingScreen(viewModel: AppViewModel, device: DiscoveredAtv) {
     val s = LocalAppStrings.current
     val ui by viewModel.pairing.collectAsState()
     var pin by remember { mutableStateOf("") }
+    val androidTv = device.platform == TvPlatform.AndroidTv
+    val pinLength = if (androidTv) 6 else 4
 
     Column(
         Modifier.fillMaxSize().padding(32.dp),
@@ -64,13 +67,22 @@ fun PairingScreen(viewModel: AppViewModel, device: DiscoveredAtv) {
                 Spacer(Modifier.height(16.dp))
                 OutlinedTextField(
                     value = pin,
-                    onValueChange = { if (it.length <= 4 && it.all(Char::isDigit)) pin = it },
+                    onValueChange = {
+                        val valid = if (androidTv) {
+                            it.all { char -> char in "0123456789abcdefABCDEF" }
+                        } else {
+                            it.all(Char::isDigit)
+                        }
+                        if (it.length <= pinLength && valid) pin = it
+                    },
                     label = { Text(s.pin) },
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = if (androidTv) KeyboardType.Ascii else KeyboardType.NumberPassword,
+                    ),
                 )
                 Spacer(Modifier.height(16.dp))
-                Button(onClick = { viewModel.submitPin(pin) }, enabled = pin.length == 4) {
+                Button(onClick = { viewModel.submitPin(pin) }, enabled = pin.length == pinLength) {
                     Text(s.pair)
                 }
             }
@@ -85,8 +97,6 @@ fun PairingScreen(viewModel: AppViewModel, device: DiscoveredAtv) {
         TextButton(onClick = { viewModel.cancelPairing() }) { Text(s.cancel) }
 
         Spacer(Modifier.height(32.dp))
-        // Hint: a hard-restarted / power-cycled Apple TV takes ~1 min to
-        // reappear on the network before it can be reached.
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,

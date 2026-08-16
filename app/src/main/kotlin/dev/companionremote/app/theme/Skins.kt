@@ -3,180 +3,509 @@ package dev.companionremote.app.theme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
-import dev.companionremote.app.data.AppSkin
 
-/**
- * A skin bundles an accent-tinted [ColorScheme], a page background gradient and
- * a translucent "glass" palette for the remote keys. Skins are orthogonal to
- * light/dark: every skin has both variants so the appearance toggle still works.
- *
- * The glass look is achieved without a real backdrop blur (expensive / API-gated):
- * keys are translucent with a top sheen and a hairline border, layered over the
- * page gradient so it bleeds through — which reads convincingly as frosted glass.
- */
+/** Curated color directions; each one has a complete semantic Material palette. */
+enum class ThemeVariant { LocalBeam, Graphite, Ember, Midnight, Ocean, Forest, Rose }
 
-/** Translucent styling for remote keys. */
-data class GlassPalette(
-    val fill: Color,
-    val highlight: Color,
-    val border: Color,
-    val dark: Boolean,
-)
-
-private val MidnightDarkGlass = GlassPalette(
-    fill = Color.White.copy(alpha = 0.075f),
-    highlight = Color.White.copy(alpha = 0.12f),
-    border = Color.White.copy(alpha = 0.16f),
-    dark = true,
-)
-
-/** Provided so leaf composables can pick up the current glass styling. */
-val LocalGlass = staticCompositionLocalOf { MidnightDarkGlass }
-
-/**
- * Translucent glass background + top sheen + hairline border, clipped to
- * [shape]. Deliberately draws **no** elevation shadow: Android's outline
- * shadow renders circular shapes as octagons on some devices (e.g. Samsung
- * One UI). Depth comes from the sheen gradient and the border instead.
- */
-@Composable
-fun Modifier.glass(shape: Shape): Modifier {
-    val g = LocalGlass.current
-    return this
-        .clip(shape)
-        .background(g.fill, shape)
-        .background(Brush.verticalGradient(listOf(g.highlight, Color.Transparent)), shape)
-        .border(1.dp, g.border, shape)
+fun modernColorScheme(dark: Boolean, variant: ThemeVariant = ThemeVariant.LocalBeam): ColorScheme = when (variant) {
+    ThemeVariant.LocalBeam -> localBeamColorScheme(dark)
+    ThemeVariant.Graphite -> graphiteColorScheme(dark)
+    ThemeVariant.Ember -> emberColorScheme(dark)
+    ThemeVariant.Midnight -> midnightColorScheme(dark)
+    ThemeVariant.Ocean -> oceanColorScheme(dark)
+    ThemeVariant.Forest -> forestColorScheme(dark)
+    ThemeVariant.Rose -> roseColorScheme(dark)
 }
 
-// --- Accents per skin ------------------------------------------------------
-
-private data class Accent(
-    val primary: Color,
-    val container: Color,
-    val onContainer: Color,
-)
-
-private fun accent(skin: AppSkin, dark: Boolean): Accent = when (skin) {
-    AppSkin.Midnight -> if (dark)
-        Accent(Color(0xFF7AA2F7), Color(0xFF283452), Color(0xFFD6E0FF))
-    else
-        Accent(Color(0xFF3B5BDB), Color(0xFFDCE3FF), Color(0xFF0A1B4D))
-    AppSkin.Graphite -> if (dark)
-        Accent(Color(0xFF5FD6C4), Color(0xFF1E3B38), Color(0xFFBFF3EA))
-    else
-        Accent(Color(0xFF12897A), Color(0xFFCFEFE9), Color(0xFF06322C))
-    AppSkin.Aurora -> if (dark)
-        Accent(Color(0xFFC6A2FF), Color(0xFF382952), Color(0xFFE8DBFF))
-    else
-        Accent(Color(0xFF7A3FF2), Color(0xFFEADFFF), Color(0xFF2A0E63))
-    AppSkin.Sunset -> if (dark)
-        Accent(Color(0xFFFF9E7A), Color(0xFF4A2A2A), Color(0xFFFFDBCB))
-    else
-        Accent(Color(0xFFE5603C), Color(0xFFFFDDD0), Color(0xFF5A1B0A))
-}
-
-// --- Color schemes ---------------------------------------------------------
-
-private fun baseDark(a: Accent) = darkColorScheme(
-    primary = a.primary,
-    onPrimary = Color(0xFF0A1022),
-    primaryContainer = a.container,
-    onPrimaryContainer = a.onContainer,
-    secondary = Color(0xFF9AA5CE),
-    onSecondary = Color(0xFF10141F),
-    secondaryContainer = Color(0xFF232A3B),
-    onSecondaryContainer = Color(0xFFD3DAF0),
-    background = Color(0xFF0B0E13),
-    onBackground = Color(0xFFE6E9F2),
-    surface = Color(0xFF11141B),
-    onSurface = Color(0xFFE6E9F2),
-    surfaceVariant = Color(0xFF1B2029),
-    onSurfaceVariant = Color(0xFF9CA3B4),
-    surfaceContainerLowest = Color(0xFF0A0D12),
-    surfaceContainerLow = Color(0xFF14171F),
-    surfaceContainer = Color(0xFF161A22),
-    surfaceContainerHigh = Color(0xFF1E232D),
-    surfaceContainerHighest = Color(0xFF252B37),
-    outline = Color(0xFF2E3542),
-    outlineVariant = Color(0xFF222834),
-    error = Color(0xFFF7768E),
-)
-
-private fun baseLight(a: Accent) = lightColorScheme(
-    primary = a.primary,
-    onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = a.container,
-    onPrimaryContainer = a.onContainer,
-    secondary = Color(0xFF5A6478),
-    onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFFE2E7F3),
-    onSecondaryContainer = Color(0xFF1A2233),
-    background = Color(0xFFFBFCFE),
-    onBackground = Color(0xFF1A1C22),
-    surface = Color(0xFFF7F8FB),
-    onSurface = Color(0xFF1A1C22),
-    surfaceVariant = Color(0xFFE6E9F0),
-    onSurfaceVariant = Color(0xFF5A6072),
-    surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFF1F3F8),
-    surfaceContainer = Color(0xFFEEF1F6),
-    surfaceContainerHigh = Color(0xFFE8ECF3),
-    surfaceContainerHighest = Color(0xFFE1E6EF),
-    outline = Color(0xFFC4CAD6),
-    outlineVariant = Color(0xFFDCE0E9),
-    error = Color(0xFFD03A56),
-)
-
-/** The [ColorScheme] for a skin + light/dark. */
-fun skinColorScheme(skin: AppSkin, dark: Boolean): ColorScheme {
-    val a = accent(skin, dark)
-    return if (dark) baseDark(a) else baseLight(a)
-}
-
-// --- Page background gradients ---------------------------------------------
-
-private fun darkGradient(skin: AppSkin): List<Color> = when (skin) {
-    AppSkin.Midnight -> listOf(Color(0xFF141B31), Color(0xFF0B0E15), Color(0xFF090B10))
-    AppSkin.Graphite -> listOf(Color(0xFF20242B), Color(0xFF121419), Color(0xFF0C0D11))
-    AppSkin.Aurora -> listOf(Color(0xFF1E1638), Color(0xFF130F24), Color(0xFF0B0916))
-    AppSkin.Sunset -> listOf(Color(0xFF2C1626), Color(0xFF1A1017), Color(0xFF0F0A0E))
-}
-
-private fun lightGradient(skin: AppSkin): List<Color> = when (skin) {
-    AppSkin.Midnight -> listOf(Color(0xFFEAF0FF), Color(0xFFF6F8FF), Color(0xFFFCFDFF))
-    AppSkin.Graphite -> listOf(Color(0xFFEBEEF2), Color(0xFFF5F6F9), Color(0xFFFBFCFD))
-    AppSkin.Aurora -> listOf(Color(0xFFF0E9FF), Color(0xFFF8F4FF), Color(0xFFFDFCFF))
-    AppSkin.Sunset -> listOf(Color(0xFFFFEDE4), Color(0xFFFFF6F1), Color(0xFFFFFCFA))
-}
-
-/** The full-page gradient painted behind everything (top→bottom, tinted). */
-fun skinBackground(skin: AppSkin, dark: Boolean): Brush =
-    Brush.verticalGradient(if (dark) darkGradient(skin) else lightGradient(skin))
-
-/** A representative accent colour for a skin, used for settings swatches. */
-fun skinAccentPreview(skin: AppSkin): Color = accent(skin, dark = true).primary
-
-/** Glass key palette for a skin + light/dark. */
-fun skinGlass(dark: Boolean): GlassPalette = if (dark) {
-    MidnightDarkGlass
+/** LocalBeam's quiet blue-gray canvas with one clear electric-blue action color. */
+private fun localBeamColorScheme(dark: Boolean): ColorScheme = if (dark) {
+    darkColorScheme(
+        primary = Color(0xFFA8C7FA),
+        onPrimary = Color(0xFF0A305F),
+        primaryContainer = Color(0xFF2D466D),
+        onPrimaryContainer = Color(0xFFD6E3FF),
+        inversePrimary = Color(0xFF456F9F),
+        secondary = Color(0xFFBBC7DB),
+        onSecondary = Color(0xFF253140),
+        secondaryContainer = Color(0xFF3B4859),
+        onSecondaryContainer = Color(0xFFD7E3F7),
+        tertiary = Color(0xFFD4BFE6),
+        onTertiary = Color(0xFF392A49),
+        tertiaryContainer = Color(0xFF514261),
+        onTertiaryContainer = Color(0xFFF0DDFB),
+        background = Color(0xFF0B1118),
+        onBackground = Color(0xFFE1E9F2),
+        surface = Color(0xFF111922),
+        onSurface = Color(0xFFE1E9F2),
+        surfaceVariant = Color(0xFF404852),
+        onSurfaceVariant = Color(0xFFC1C7D0),
+        surfaceContainerLowest = Color(0xFF060B10),
+        surfaceContainerLow = Color(0xFF101820),
+        surfaceContainer = Color(0xFF161F29),
+        surfaceContainerHigh = Color(0xFF202B37),
+        surfaceContainerHighest = Color(0xFF2A3745),
+        inverseSurface = Color(0xFFE1E9F2),
+        inverseOnSurface = Color(0xFF2E343B),
+        outline = Color(0xFF8B98A9),
+        outlineVariant = Color(0xFF3F4B5B),
+        error = Color(0xFFFFB4AB),
+        onError = Color(0xFF690005),
+        errorContainer = Color(0xFF93000A),
+        onErrorContainer = Color(0xFFFFDAD6),
+    )
 } else {
-    // Frosted white tiles that stay visible over the light gradient, defined
-    // by a cool hairline border (no shadow — see [glass]).
-    GlassPalette(
-        fill = Color.White.copy(alpha = 0.82f),
-        highlight = Color.White.copy(alpha = 0.55f),
-        border = Color(0xFF3A4A66).copy(alpha = 0.16f),
-        dark = false,
+    lightColorScheme(
+        primary = Color(0xFF2F5D92),
+        onPrimary = Color.White,
+        primaryContainer = Color(0xFFD6E3FF),
+        onPrimaryContainer = Color(0xFF0A305F),
+        inversePrimary = Color(0xFFA8C7FA),
+        secondary = Color(0xFF535F70),
+        onSecondary = Color.White,
+        secondaryContainer = Color(0xFFD7E3F7),
+        onSecondaryContainer = Color(0xFF101C2B),
+        tertiary = Color(0xFF6A5777),
+        onTertiary = Color.White,
+        tertiaryContainer = Color(0xFFF0DDFB),
+        onTertiaryContainer = Color(0xFF24152F),
+        background = Color(0xFFF8F9FC),
+        onBackground = Color(0xFF191C20),
+        surface = Color(0xFFF8F9FC),
+        onSurface = Color(0xFF191C20),
+        surfaceVariant = Color(0xFFE0E5EC),
+        onSurfaceVariant = Color(0xFF434A54),
+        surfaceContainerLowest = Color.White,
+        surfaceContainerLow = Color(0xFFF2F5F9),
+        surfaceContainer = Color(0xFFECF1F6),
+        surfaceContainerHigh = Color(0xFFE5EBF2),
+        surfaceContainerHighest = Color(0xFFDDE5EE),
+        inverseSurface = Color(0xFF2E343B),
+        inverseOnSurface = Color(0xFFEFF1F6),
+        outline = Color(0xFF727C8B),
+        outlineVariant = Color(0xFFC2CAD5),
+        error = Color(0xFFBA1A1A),
+        onError = Color.White,
+        errorContainer = Color(0xFFFFDAD6),
+        onErrorContainer = Color(0xFF410002),
     )
 }
+
+private fun graphiteColorScheme(dark: Boolean): ColorScheme = if (dark) {
+    darkColorScheme(
+        primary = Color(0xFF9DE7D6),
+        onPrimary = Color(0xFF00382F),
+        primaryContainer = Color(0xFF005048),
+        onPrimaryContainer = Color(0xFFB6F3E1),
+        inversePrimary = Color(0xFF1C6B5D),
+        secondary = Color(0xFFB2CCC5),
+        onSecondary = Color(0xFF1D3530),
+        secondaryContainer = Color(0xFF344B46),
+        onSecondaryContainer = Color(0xFFCCE8E0),
+        tertiary = Color(0xFFBFD0F3),
+        onTertiary = Color(0xFF27344F),
+        tertiaryContainer = Color(0xFF3D4A66),
+        onTertiaryContainer = Color(0xFFDBE2FF),
+        background = Color(0xFF0A1110),
+        onBackground = Color(0xFFDEEAE5),
+        surface = Color(0xFF101918),
+        onSurface = Color(0xFFDEEAE5),
+        surfaceVariant = Color(0xFF3F4946),
+        onSurfaceVariant = Color(0xFFBFCAC5),
+        surfaceContainerLowest = Color(0xFF050A09),
+        surfaceContainerLow = Color(0xFF0E1615),
+        surfaceContainer = Color(0xFF151F1D),
+        surfaceContainerHigh = Color(0xFF202B28),
+        surfaceContainerHighest = Color(0xFF2A3633),
+        inverseSurface = Color(0xFFDEEAE5),
+        inverseOnSurface = Color(0xFF293330),
+        outline = Color(0xFF899590),
+        outlineVariant = Color(0xFF3F4A46),
+        error = Color(0xFFFFB4AB),
+        onError = Color(0xFF690005),
+        errorContainer = Color(0xFF93000A),
+        onErrorContainer = Color(0xFFFFDAD6),
+    )
+} else {
+    lightColorScheme(
+        primary = Color(0xFF006B5E),
+        onPrimary = Color.White,
+        primaryContainer = Color(0xFF73F8E0),
+        onPrimaryContainer = Color(0xFF00201B),
+        inversePrimary = Color(0xFF54DBC5),
+        secondary = Color(0xFF4A635D),
+        onSecondary = Color.White,
+        secondaryContainer = Color(0xFFCCE8E0),
+        onSecondaryContainer = Color(0xFF05201B),
+        tertiary = Color(0xFF4C5F88),
+        onTertiary = Color.White,
+        tertiaryContainer = Color(0xFFD9E2FF),
+        onTertiaryContainer = Color(0xFF061A40),
+        background = Color(0xFFF5FBF8),
+        onBackground = Color(0xFF161D1B),
+        surface = Color(0xFFF5FBF8),
+        onSurface = Color(0xFF161D1B),
+        surfaceVariant = Color(0xFFDBE5E1),
+        onSurfaceVariant = Color(0xFF3F4946),
+        surfaceContainerLowest = Color.White,
+        surfaceContainerLow = Color(0xFFEFF6F3),
+        surfaceContainer = Color(0xFFE9F0ED),
+        surfaceContainerHigh = Color(0xFFE2EAE7),
+        surfaceContainerHighest = Color(0xFFDCE4E1),
+        inverseSurface = Color(0xFF293330),
+        inverseOnSurface = Color(0xFFECF2EF),
+        outline = Color(0xFF707A75),
+        outlineVariant = Color(0xFFBFCAC5),
+        error = Color(0xFFBA1A1A),
+        onError = Color.White,
+        errorContainer = Color(0xFFFFDAD6),
+        onErrorContainer = Color(0xFF410002),
+    )
+}
+
+private fun emberColorScheme(dark: Boolean): ColorScheme = if (dark) {
+    darkColorScheme(
+        primary = Color(0xFFFFB680),
+        onPrimary = Color(0xFF532000),
+        primaryContainer = Color(0xFF733516),
+        onPrimaryContainer = Color(0xFFFFDCC7),
+        inversePrimary = Color(0xFF9E4E25),
+        secondary = Color(0xFFE8B9A6),
+        onSecondary = Color(0xFF442A20),
+        secondaryContainer = Color(0xFF5D4035),
+        onSecondaryContainer = Color(0xFFFFDCCB),
+        tertiary = Color(0xFFD0C48F),
+        onTertiary = Color(0xFF363016),
+        tertiaryContainer = Color(0xFF4D4628),
+        onTertiaryContainer = Color(0xFFECE2A8),
+        background = Color(0xFF130E0B),
+        onBackground = Color(0xFFF0DED5),
+        surface = Color(0xFF1A1310),
+        onSurface = Color(0xFFF0DED5),
+        surfaceVariant = Color(0xFF54443E),
+        onSurfaceVariant = Color(0xFFD7C1B8),
+        surfaceContainerLowest = Color(0xFF0E0907),
+        surfaceContainerLow = Color(0xFF18100D),
+        surfaceContainer = Color(0xFF211814),
+        surfaceContainerHigh = Color(0xFF2B201B),
+        surfaceContainerHighest = Color(0xFF362923),
+        inverseSurface = Color(0xFFF0DED5),
+        inverseOnSurface = Color(0xFF3B302B),
+        outline = Color(0xFFA88F84),
+        outlineVariant = Color(0xFF594A44),
+        error = Color(0xFFFFB4AB),
+        onError = Color(0xFF690005),
+        errorContainer = Color(0xFF93000A),
+        onErrorContainer = Color(0xFFFFDAD6),
+    )
+} else {
+    lightColorScheme(
+        primary = Color(0xFF9C4500),
+        onPrimary = Color.White,
+        primaryContainer = Color(0xFFFFDBCA),
+        onPrimaryContainer = Color(0xFF351000),
+        inversePrimary = Color(0xFFFFB68A),
+        secondary = Color(0xFF77574A),
+        onSecondary = Color.White,
+        secondaryContainer = Color(0xFFFFDCCB),
+        onSecondaryContainer = Color(0xFF2C160D),
+        tertiary = Color(0xFF665F2F),
+        onTertiary = Color.White,
+        tertiaryContainer = Color(0xFFECE2A8),
+        onTertiaryContainer = Color(0xFF1F1B00),
+        background = Color(0xFFFFF8F5),
+        onBackground = Color(0xFF211A17),
+        surface = Color(0xFFFFF8F5),
+        onSurface = Color(0xFF211A17),
+        surfaceVariant = Color(0xFFF1DED6),
+        onSurfaceVariant = Color(0xFF53433C),
+        surfaceContainerLowest = Color.White,
+        surfaceContainerLow = Color(0xFFFFF1EB),
+        surfaceContainer = Color(0xFFFCEAE3),
+        surfaceContainerHigh = Color(0xFFF7E2DA),
+        surfaceContainerHighest = Color(0xFFF1DCD4),
+        inverseSurface = Color(0xFF3B302B),
+        inverseOnSurface = Color(0xFFFFEDE6),
+        outline = Color(0xFF85736B),
+        outlineVariant = Color(0xFFD8C2B9),
+        error = Color(0xFFBA1A1A),
+        onError = Color.White,
+        errorContainer = Color(0xFFFFDAD6),
+        onErrorContainer = Color(0xFF410002),
+    )
+}
+
+/** Deep violet surfaces with a soft lavender action color. */
+private fun midnightColorScheme(dark: Boolean): ColorScheme = if (dark) {
+    darkColorScheme(
+        primary = Color(0xFFD8B9FF),
+        onPrimary = Color(0xFF3B176E),
+        primaryContainer = Color(0xFF552B8C),
+        onPrimaryContainer = Color(0xFFF0DBFF),
+        inversePrimary = Color(0xFF7045A9),
+        secondary = Color(0xFFD4C3E4),
+        onSecondary = Color(0xFF34273F),
+        secondaryContainer = Color(0xFF4B3B56),
+        onSecondaryContainer = Color(0xFFEEDFFF),
+        tertiary = Color(0xFFC5CBFF),
+        onTertiary = Color(0xFF272B5A),
+        tertiaryContainer = Color(0xFF3F4580),
+        onTertiaryContainer = Color(0xFFE0E0FF),
+        background = Color(0xFF0F0B1A),
+        onBackground = Color(0xFFE9E0F2),
+        surface = Color(0xFF171225),
+        onSurface = Color(0xFFE9E0F2),
+        surfaceVariant = Color(0xFF4A4352),
+        onSurfaceVariant = Color(0xFFCBC2D2),
+        surfaceContainerLowest = Color(0xFF090611),
+        surfaceContainerLow = Color(0xFF120D1D),
+        surfaceContainer = Color(0xFF1C162A),
+        surfaceContainerHigh = Color(0xFF261F35),
+        surfaceContainerHighest = Color(0xFF312940),
+        inverseSurface = Color(0xFFE9E0F2),
+        inverseOnSurface = Color(0xFF342F39),
+        outline = Color(0xFF958C9D),
+        outlineVariant = Color(0xFF4A4352),
+    )
+} else {
+    lightColorScheme(
+        primary = Color(0xFF7145A6),
+        onPrimary = Color.White,
+        primaryContainer = Color(0xFFEADBFF),
+        onPrimaryContainer = Color(0xFF291047),
+        inversePrimary = Color(0xFFD8B9FF),
+        secondary = Color(0xFF63566D),
+        onSecondary = Color.White,
+        secondaryContainer = Color(0xFFEBDDF0),
+        onSecondaryContainer = Color(0xFF201526),
+        tertiary = Color(0xFF5A6090),
+        onTertiary = Color.White,
+        tertiaryContainer = Color(0xFFE0E0FF),
+        onTertiaryContainer = Color(0xFF171942),
+        background = Color(0xFFFFFBFF),
+        onBackground = Color(0xFF1D1A20),
+        surface = Color(0xFFFFFBFF),
+        onSurface = Color(0xFF1D1A20),
+        surfaceVariant = Color(0xFFE8E0EA),
+        onSurfaceVariant = Color(0xFF4A454E),
+        surfaceContainerLowest = Color.White,
+        surfaceContainerLow = Color(0xFFF9F2FA),
+        surfaceContainer = Color(0xFFF3EBF8),
+        surfaceContainerHigh = Color(0xFFEDE4F2),
+        surfaceContainerHighest = Color(0xFFE7DEEC),
+        inverseSurface = Color(0xFF342F39),
+        inverseOnSurface = Color(0xFFF7EEF8),
+        outline = Color(0xFF7B737F),
+        outlineVariant = Color(0xFFCBC3CC),
+    )
+}
+
+/** Deep teal surfaces with a clear cyan accent. */
+private fun oceanColorScheme(dark: Boolean): ColorScheme = if (dark) {
+    darkColorScheme(
+        primary = Color(0xFF6DE7E0),
+        onPrimary = Color(0xFF003735),
+        primaryContainer = Color(0xFF00504D),
+        onPrimaryContainer = Color(0xFF88F4ED),
+        inversePrimary = Color(0xFF006A66),
+        secondary = Color(0xFFB1CCCA),
+        onSecondary = Color(0xFF1C3534),
+        secondaryContainer = Color(0xFF334B4A),
+        onSecondaryContainer = Color(0xFFCCE8E5),
+        tertiary = Color(0xFFBFD0F3),
+        onTertiary = Color(0xFF28334D),
+        tertiaryContainer = Color(0xFF3F4964),
+        onTertiaryContainer = Color(0xFFDCE2FF),
+        background = Color(0xFF071416),
+        onBackground = Color(0xFFDDEAE8),
+        surface = Color(0xFF0C1C1E),
+        onSurface = Color(0xFFDDEAE8),
+        surfaceVariant = Color(0xFF3F4949),
+        onSurfaceVariant = Color(0xFFBECAC9),
+        surfaceContainerLowest = Color(0xFF040B0C),
+        surfaceContainerLow = Color(0xFF091719),
+        surfaceContainer = Color(0xFF102123),
+        surfaceContainerHigh = Color(0xFF1A2B2D),
+        surfaceContainerHighest = Color(0xFF243638),
+        inverseSurface = Color(0xFFDDEAE8),
+        inverseOnSurface = Color(0xFF293333),
+        outline = Color(0xFF899594),
+        outlineVariant = Color(0xFF3F4949),
+    )
+} else {
+    lightColorScheme(
+        primary = Color(0xFF006A66),
+        onPrimary = Color.White,
+        primaryContainer = Color(0xFF89F3EC),
+        onPrimaryContainer = Color(0xFF00201F),
+        inversePrimary = Color(0xFF6DE7E0),
+        secondary = Color(0xFF4A6462),
+        onSecondary = Color.White,
+        secondaryContainer = Color(0xFFCCE8E5),
+        onSecondaryContainer = Color(0xFF051F1E),
+        tertiary = Color(0xFF566487),
+        onTertiary = Color.White,
+        tertiaryContainer = Color(0xFFDCE2FF),
+        onTertiaryContainer = Color(0xFF111A33),
+        background = Color(0xFFF4FBFA),
+        onBackground = Color(0xFF161D1D),
+        surface = Color(0xFFF4FBFA),
+        onSurface = Color(0xFF161D1D),
+        surfaceVariant = Color(0xFFDCE5E4),
+        onSurfaceVariant = Color(0xFF404949),
+        surfaceContainerLowest = Color.White,
+        surfaceContainerLow = Color(0xFFEDF6F4),
+        surfaceContainer = Color(0xFFE5F0EE),
+        surfaceContainerHigh = Color(0xFFDDE9E7),
+        surfaceContainerHighest = Color(0xFFD7E3E1),
+        inverseSurface = Color(0xFF293333),
+        inverseOnSurface = Color(0xFFECF4F2),
+        outline = Color(0xFF707A79),
+        outlineVariant = Color(0xFFBECAC8),
+    )
+}
+
+/** Quiet green surfaces with an accessible mint accent. */
+private fun forestColorScheme(dark: Boolean): ColorScheme = if (dark) {
+    darkColorScheme(
+        primary = Color(0xFFA9D78D),
+        onPrimary = Color(0xFF1C380F),
+        primaryContainer = Color(0xFF365323),
+        onPrimaryContainer = Color(0xFFC5F2A8),
+        inversePrimary = Color(0xFF4D6B38),
+        secondary = Color(0xFFC0CCB7),
+        onSecondary = Color(0xFF2A3425),
+        secondaryContainer = Color(0xFF414B3A),
+        onSecondaryContainer = Color(0xFFDCE8D2),
+        tertiary = Color(0xFFA8D4D4),
+        onTertiary = Color(0xFF123737),
+        tertiaryContainer = Color(0xFF2D4F50),
+        onTertiaryContainer = Color(0xFFC4ECEB),
+        background = Color(0xFF0B140D),
+        onBackground = Color(0xFFE1E9DA),
+        surface = Color(0xFF111C13),
+        onSurface = Color(0xFFE1E9DA),
+        surfaceVariant = Color(0xFF424A3E),
+        onSurfaceVariant = Color(0xFFC1C9B9),
+        surfaceContainerLowest = Color(0xFF060B07),
+        surfaceContainerLow = Color(0xFF0E170F),
+        surfaceContainer = Color(0xFF172219),
+        surfaceContainerHigh = Color(0xFF222D23),
+        surfaceContainerHighest = Color(0xFF2C382D),
+        inverseSurface = Color(0xFFE1E9DA),
+        inverseOnSurface = Color(0xFF2F352D),
+        outline = Color(0xFF8B9583),
+        outlineVariant = Color(0xFF424A3E),
+    )
+} else {
+    lightColorScheme(
+        primary = Color(0xFF4D6B38),
+        onPrimary = Color.White,
+        primaryContainer = Color(0xFFC9F0AD),
+        onPrimaryContainer = Color(0xFF102800),
+        inversePrimary = Color(0xFFA9D78D),
+        secondary = Color(0xFF596650),
+        onSecondary = Color.White,
+        secondaryContainer = Color(0xFFDCE8D2),
+        onSecondaryContainer = Color(0xFF151E11),
+        tertiary = Color(0xFF3F6868),
+        onTertiary = Color.White,
+        tertiaryContainer = Color(0xFFC4ECEB),
+        onTertiaryContainer = Color(0xFF002020),
+        background = Color(0xFFF9FCF3),
+        onBackground = Color(0xFF191D17),
+        surface = Color(0xFFF9FCF3),
+        onSurface = Color(0xFF191D17),
+        surfaceVariant = Color(0xFFE0E7D9),
+        onSurfaceVariant = Color(0xFF444A40),
+        surfaceContainerLowest = Color.White,
+        surfaceContainerLow = Color(0xFFF1F6EB),
+        surfaceContainer = Color(0xFFEAF0E4),
+        surfaceContainerHigh = Color(0xFFE4EADD),
+        surfaceContainerHighest = Color(0xFFDDE4D6),
+        inverseSurface = Color(0xFF2F352D),
+        inverseOnSurface = Color(0xFFEFF5E8),
+        outline = Color(0xFF747B6D),
+        outlineVariant = Color(0xFFC4CCBC),
+    )
+}
+
+/** Plum surfaces with a warm rose accent. */
+private fun roseColorScheme(dark: Boolean): ColorScheme = if (dark) {
+    darkColorScheme(
+        primary = Color(0xFFFFB1C7),
+        onPrimary = Color(0xFF5B1230),
+        primaryContainer = Color(0xFF7B294B),
+        onPrimaryContainer = Color(0xFFFFD9E2),
+        inversePrimary = Color(0xFF9D3F61),
+        secondary = Color(0xFFE7BDC8),
+        onSecondary = Color(0xFF432932),
+        secondaryContainer = Color(0xFF5B3F48),
+        onSecondaryContainer = Color(0xFFFFD9E2),
+        tertiary = Color(0xFFD5C3F0),
+        onTertiary = Color(0xFF38264E),
+        tertiaryContainer = Color(0xFF4F3966),
+        onTertiaryContainer = Color(0xFFECDFFF),
+        background = Color(0xFF180B12),
+        onBackground = Color(0xFFF3DEE4),
+        surface = Color(0xFF211219),
+        onSurface = Color(0xFFF3DEE4),
+        surfaceVariant = Color(0xFF514047),
+        onSurfaceVariant = Color(0xFFD6C1C8),
+        surfaceContainerLowest = Color(0xFF0D060A),
+        surfaceContainerLow = Color(0xFF1B0E14),
+        surfaceContainer = Color(0xFF27171F),
+        surfaceContainerHigh = Color(0xFF322129),
+        surfaceContainerHighest = Color(0xFF3D2B33),
+        inverseSurface = Color(0xFFF3DEE4),
+        inverseOnSurface = Color(0xFF382E32),
+        outline = Color(0xFF9F8A91),
+        outlineVariant = Color(0xFF514047),
+    )
+} else {
+    lightColorScheme(
+        primary = Color(0xFF9D3F61),
+        onPrimary = Color.White,
+        primaryContainer = Color(0xFFFFD9E2),
+        onPrimaryContainer = Color(0xFF3F071D),
+        inversePrimary = Color(0xFFFFB1C7),
+        secondary = Color(0xFF765761),
+        onSecondary = Color.White,
+        secondaryContainer = Color(0xFFFFD9E2),
+        onSecondaryContainer = Color(0xFF2C151D),
+        tertiary = Color(0xFF67527E),
+        onTertiary = Color.White,
+        tertiaryContainer = Color(0xFFECDFFF),
+        onTertiaryContainer = Color(0xFF221236),
+        background = Color(0xFFFFF8F9),
+        onBackground = Color(0xFF21191C),
+        surface = Color(0xFFFFF8F9),
+        onSurface = Color(0xFF21191C),
+        surfaceVariant = Color(0xFFF2DDE2),
+        onSurfaceVariant = Color(0xFF514348),
+        surfaceContainerLowest = Color.White,
+        surfaceContainerLow = Color(0xFFFFF0F3),
+        surfaceContainer = Color(0xFFFCE8EC),
+        surfaceContainerHigh = Color(0xFFF6E0E5),
+        surfaceContainerHighest = Color(0xFFF0D9DE),
+        inverseSurface = Color(0xFF382E32),
+        inverseOnSurface = Color(0xFFFFEDF0),
+        outline = Color(0xFF827278),
+        outlineVariant = Color(0xFFD5C1C6),
+    )
+}
+
+/** A semantic raised surface used for remote controls and interactive cards. */
+@Composable
+fun Modifier.glass(shape: Shape): Modifier = this
+    .clip(shape)
+    .background(MaterialTheme.colorScheme.surfaceContainerHigh, shape)
+    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
