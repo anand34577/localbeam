@@ -7,82 +7,36 @@ import android.net.wifi.WifiManager
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 
-enum class TvPlatform { AppleTv, AndroidTv }
-
-data class DiscoveredAtv(
-    val name: String,
-    val host: String,
-    val port: Int,
-    val model: String?,
-    val platform: TvPlatform = TvPlatform.AppleTv,
-    val pairingPort: Int? = null,
-    /** True when this endpoint was entered or restored directly instead of discovered. */
-    val direct: Boolean = false,
-)
-
 /**
- * mDNS discovery of `_companion-link._tcp` services via NsdManager.
- * A WifiManager.MulticastLock is held while discovering — without it,
- * discovery silently returns nothing on most devices.
+ * Local mDNS discovery for Android TV Remote Service v2. Different TV
+ * firmware generations advertise one of these two service names.
  */
-class AtvDiscovery(context: Context) {
+class AndroidTvDiscovery(context: Context) {
 
     private val appContext = context.applicationContext
     private val nsdManager = appContext.getSystemService(Context.NSD_SERVICE) as NsdManager
     private val wifiManager = appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
 
-    /**
-     * Browse for [durationMs] and return every resolved Apple TV.
-     * Resolution happens sequentially (NsdManager allows one resolve at a
-     * time on older Android versions).
-     */
     suspend fun scan(durationMs: Long = 6_000, onDevice: (DiscoveredAtv) -> Unit) {
-        val multicastLock = wifiManager.createMulticastLock("companion-remote-discovery").apply {
+        val multicastLock = wifiManager.createMulticastLock("cyberremote-androidtv-discovery").apply {
             setReferenceCounted(false)
             acquire()
         }
-        val found = LinkedHashMap<String, NsdServiceInfo>()
-        val listener = object : NsdManager.DiscoveryListener {
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
-            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
-            override fun onDiscoveryStarted(serviceType: String) = Unit
-            override fun onDiscoveryStopped(serviceType: String) = Unit
-            override fun onServiceLost(serviceInfo: NsdServiceInfo) = Unit
-            override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                synchronized(found) { found[serviceInfo.serviceName] = serviceInfo }
-            }
-        }
-
         try {
-            nsdManager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
-            val deadline = System.currentTimeMillis() + durationMs
-            val resolved = mutableSetOf<String>()
-            while (System.currentTimeMillis() < deadline) {
-                val pending = synchronized(found) {
-                    found.entries.firstOrNull { it.key !in resolved }
-                }
-                if (pending == null) {
-                    kotlinx.coroutines.delay(200)
-                    continue
-                }
-                resolved.add(pending.key)
-                resolve(pending.value)?.let(onDevice)
+            val perServiceDuration = (durationMs / SERVICE_TYPES.size).coerceAtLeast(1_000)
+            for (serviceType in SERVICE_TYPES) {
+                scanService(serviceType, perServiceDuration, onDevice)
             }
         } finally {
-            runCatching { nsdManager.stopServiceDiscovery(listener) }
             runCatching { multicastLock.release() }
         }
     }
 
-    /**
-     * Re-resolve the current host/port for a service by name, returning as
-     * soon as it is found. The Companion port is ephemeral (changes after
-     * reboot) so this runs on every connect.
-     */
     suspend fun resolveByName(name: String, timeoutMs: Long = 6_000): DiscoveredAtv? =
         withTimeoutOrNull(timeoutMs) {
             coroutineScope {
@@ -97,6 +51,44 @@ class AtvDiscovery(context: Context) {
                 device
             }
         }
+
+    @Suppress("DEPRECATION")
+    private suspend fun scanService(
+        serviceType: String,
+        durationMs: Long,
+        onDevice: (DiscoveredAtv) -> Unit,
+    ) {
+        val found = LinkedHashMap<String, NsdServiceInfo>()
+        val listener = object : NsdManager.DiscoveryListener {
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
+            override fun onDiscoveryStarted(serviceType: String) = Unit
+            override fun onDiscoveryStopped(serviceType: String) = Unit
+            override fun onServiceLost(serviceInfo: NsdServiceInfo) = Unit
+            override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                synchronized(found) { found[serviceInfo.serviceName] = serviceInfo }
+            }
+        }
+
+        try {
+            nsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener)
+            val deadline = System.currentTimeMillis() + durationMs
+            val resolved = mutableSetOf<String>()
+            while (System.currentTimeMillis() < deadline) {
+                val pending = synchronized(found) {
+                    found.entries.firstOrNull { it.key !in resolved }
+                }
+                if (pending == null) {
+                    delay(150)
+                    continue
+                }
+                resolved.add(pending.key)
+                resolve(pending.value)?.let(onDevice)
+            }
+        } finally {
+            runCatching { nsdManager.stopServiceDiscovery(listener) }
+        }
+    }
 
     @Suppress("DEPRECATION")
     private suspend fun resolve(info: NsdServiceInfo): DiscoveredAtv? =
@@ -115,27 +107,15 @@ class AtvDiscovery(context: Context) {
                                 if (continuation.isActive) continuation.resume(null)
                                 return
                             }
-                            val model = serviceInfo.attributes["rpMd"]?.toString(Charsets.UTF_8)
-                            val flags = serviceInfo.attributes["rpFl"]?.toString(Charsets.UTF_8)
-                                ?.removePrefix("0x")?.toIntOrNull(16) ?: 0
-                            // The `_companion-link._tcp` service is also
-                            // advertised by Macs and HomePods. Keep only Apple
-                            // TVs: model starts with "AppleTV", or (model
-                            // missing) the rpFl PIN-pairable bit is set — Macs
-                            // and HomePods do not set it.
-                            val isAppleTv = model?.startsWith("AppleTV") == true ||
-                                (model.isNullOrEmpty() && (flags and PAIRABLE_MASK) != 0)
-                            if (!isAppleTv) {
-                                if (continuation.isActive) continuation.resume(null)
-                                return
-                            }
                             if (continuation.isActive) {
                                 continuation.resume(
                                     DiscoveredAtv(
-                                        name = serviceInfo.serviceName,
+                                        name = "Android TV · ${serviceInfo.serviceName}",
                                         host = host,
-                                        port = serviceInfo.port,
-                                        model = model,
+                                        port = 6466,
+                                        pairingPort = 6467,
+                                        model = serviceInfo.attributes["fn"]?.toString(Charsets.UTF_8),
+                                        platform = TvPlatform.AndroidTv,
                                     ),
                                 )
                             }
@@ -146,10 +126,9 @@ class AtvDiscovery(context: Context) {
         }
 
     companion object {
-        const val SERVICE_TYPE = "_companion-link._tcp."
-
-        // pyatv PAIRING_WITH_PIN_SUPPORTED_MASK — set on Apple TVs, not on
-        // Macs/HomePods (pyatv/protocols/companion/__init__.py).
-        private const val PAIRABLE_MASK = 0x4000
+        private val SERVICE_TYPES = listOf(
+            "_androidtvremote2._tcp.",
+            "_androidtvremote._tcp.",
+        )
     }
 }

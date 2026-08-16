@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Tv
@@ -47,6 +48,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import dev.companionremote.app.AppViewModel
 import dev.companionremote.app.R
+import dev.companionremote.app.discovery.TvPlatform
 import dev.companionremote.app.i18n.LocalAppStrings
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,13 +57,14 @@ fun DeviceListScreen(viewModel: AppViewModel) {
     val s = LocalAppStrings.current
     val ui by viewModel.deviceList.collectAsState()
     var showManualDialog by remember { mutableStateOf(false) }
+    var renameTarget by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
-        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = androidx.compose.ui.graphics.Color.Transparent,
+                    containerColor = MaterialTheme.colorScheme.background,
                 ),
                 title = {
                     Text(
@@ -99,7 +102,7 @@ fun DeviceListScreen(viewModel: AppViewModel) {
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        painterResource(R.drawable.ic_apple),
+                        Icons.Rounded.Tv,
                         contentDescription = null,
                         Modifier.size(44.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -130,6 +133,7 @@ fun DeviceListScreen(viewModel: AppViewModel) {
                         onClick = { viewModel.selectDevice(device) },
                         shape = RoundedCornerShape(20.dp),
                         color = MaterialTheme.colorScheme.surfaceContainer,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Row(
@@ -142,12 +146,21 @@ fun DeviceListScreen(viewModel: AppViewModel) {
                                 ),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Icon(
-                                    painterResource(R.drawable.ic_apple),
-                                    contentDescription = null,
-                                    Modifier.size(26.dp),
-                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                )
+                                if (device.platform == TvPlatform.AppleTv) {
+                                    Icon(
+                                        painterResource(R.drawable.ic_apple),
+                                        contentDescription = null,
+                                        Modifier.size(26.dp),
+                                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    )
+                                } else {
+                                    Icon(
+                                        Icons.Rounded.Tv,
+                                        contentDescription = null,
+                                        Modifier.size(26.dp),
+                                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    )
+                                }
                             }
                             Column(Modifier.padding(start = 16.dp).weight(1f)) {
                                 Text(
@@ -164,9 +177,10 @@ fun DeviceListScreen(viewModel: AppViewModel) {
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            if (device.name in ui.pairedNames) {
-                                TextButton(onClick = { viewModel.forgetDevice(device) }) { Text(s.forget) }
+                            IconButton(onClick = { renameTarget = device.name }) {
+                                Icon(Icons.Rounded.Edit, contentDescription = s.edit)
                             }
+                            TextButton(onClick = { viewModel.forgetDevice(device) }) { Text(s.forget) }
                         }
                     }
                 }
@@ -177,6 +191,8 @@ fun DeviceListScreen(viewModel: AppViewModel) {
     if (showManualDialog) {
         var host by remember { mutableStateOf("") }
         var port by remember { mutableStateOf("") }
+        var deviceName by remember { mutableStateOf("") }
+        var platform by remember { mutableStateOf(TvPlatform.AppleTv) }
         AlertDialog(
             onDismissRequest = { showManualDialog = false },
             title = { Text(s.connectByIp) },
@@ -184,6 +200,23 @@ fun DeviceListScreen(viewModel: AppViewModel) {
                 Column {
                     Text(s.connectByIpDesc, style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            platform = TvPlatform.AppleTv
+                            if (port == "6466") port = ""
+                        }) { Text(s.appleTv) }
+                        TextButton(onClick = {
+                            platform = TvPlatform.AndroidTv
+                            if (port.isBlank()) port = "6466"
+                        }) { Text(s.androidTv) }
+                    }
+                    OutlinedTextField(
+                        value = deviceName,
+                        onValueChange = { deviceName = it },
+                        label = { Text(s.deviceName) },
+                        singleLine = true,
+                    )
+                    Spacer(Modifier.height(8.dp))
                     OutlinedTextField(host, { host = it }, label = { Text(s.ipAddress) }, singleLine = true)
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(port, { port = it }, label = { Text(s.port) }, singleLine = true)
@@ -191,10 +224,11 @@ fun DeviceListScreen(viewModel: AppViewModel) {
             },
             confirmButton = {
                 TextButton(
+                    enabled = host.isNotBlank() && port.toIntOrNull()?.let { it in 1..65_535 } == true,
                     onClick = {
                         port.toIntOrNull()?.let { p ->
                             showManualDialog = false
-                            viewModel.addManualDevice(host.trim(), p)
+                            viewModel.addManualDevice(host.trim(), p, platform, deviceName)
                         }
                     },
                 ) { Text(s.connect) }
@@ -202,4 +236,39 @@ fun DeviceListScreen(viewModel: AppViewModel) {
             dismissButton = { TextButton(onClick = { showManualDialog = false }) { Text(s.cancel) } },
         )
     }
+
+    renameTarget?.let { currentName ->
+        DeviceRenameDialog(
+            currentName = currentName,
+            onDismiss = { renameTarget = null },
+            onSave = { newName ->
+                viewModel.renameDeviceByName(currentName, newName)
+                renameTarget = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun DeviceRenameDialog(currentName: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    val s = LocalAppStrings.current
+    var name by remember(currentName) { mutableStateOf(currentName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(s.renameDevice) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text(s.deviceName) },
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(enabled = name.trim().isNotBlank(), onClick = { onSave(name) }) {
+                Text(s.save)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(s.cancel) } },
+    )
 }

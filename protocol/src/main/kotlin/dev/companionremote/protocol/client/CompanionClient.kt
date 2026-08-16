@@ -34,7 +34,7 @@ import kotlinx.coroutines.launch
 class CompanionClient(
     private val connection: CompanionConnection,
     private val credentials: HapCredentials,
-    private val name: String = "CyberRemote",
+    private val name: String = "LocalBeam",
 ) {
     /** Combined session id after `_sessionStart`: (remote << 32) | local. */
     var sessionId: Long = 0

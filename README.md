@@ -1,169 +1,174 @@
-# CyberRemote
+# LocalBeam
 
-A free, open-source, ad-free Android remote for Apple TV (tvOS 15+). It speaks Apple's Companion Link protocol directly over your local network — no cloud, no bridge server, no companion daemon, no telemetry. The phone talks straight to the Apple TV.
+LocalBeam is a free, open-source Android remote for Apple TV and Android TV / Google TV. It communicates directly with supported TVs over the local network, without a cloud service, bridge server, advertising SDK, analytics SDK, tracker, or telemetry pipeline.
 
-> CyberRemote is an independent open-source project. It is **not affiliated with, endorsed by, or sponsored by Apple Inc.** "Apple TV" is a trademark of Apple Inc., used here only to describe compatibility.
+LocalBeam is an independent project. It is not affiliated with, endorsed by, or sponsored by Apple Inc. “Apple TV” is a trademark of Apple Inc., used only to describe compatibility.
 
 <p align="center">
-  <img src="docs/screenshots/remote.png" width="240" alt="Remote">
-  <img src="https://github.com/user-attachments/assets/2fdf3f5a-a426-4550-b83f-acd42af68785" width="240" alt="Touchpad">
-  <img src="https://github.com/user-attachments/assets/4a444713-9511-4d92-b9d1-aa691d4e18b2" width="240" alt="App launcher">
+  <a href="docs/screenshots/home.png">
+    <img src="docs/screenshots/home.png" width="240" alt="LocalBeam paired TV list">
+  </a>
+  <a href="docs/screenshots/android-remote.png">
+    <img src="docs/screenshots/android-remote.png" width="240" alt="LocalBeam Android TV remote">
+  </a>
+  <a href="docs/screenshots/ip-add.png">
+    <img src="docs/screenshots/ip-add.png" width="240" alt="LocalBeam manual IP connection dialog">
+  </a>
 </p>
-<p align="center">
-  <em>Remote · Touchpad · App launcher</em>
-</p>
 
-## Features
+<p align="center"><em>Paired TVs · Android TV remote · Manual IP connection</em></p>
 
-- **Full keyboard input** — when a text field is focused on the TV, your phone's keyboard opens automatically and types straight into it (search boxes, passwords, URLs). CJK and emoji included.
-- **Voice dictation** — tap the mic and speak; your words are typed into the focused TV search box (on-device speech recognition, offline-first).
-- D-pad, OK (tap = select, hold), back, home, play/pause
-- **Volume** — tap +/− or swipe the volume bar up/down
-- Wake and sleep
-- Touchpad swipe navigation
-- App list + launch
-- **Themes** — light / dark / follow-system, plus four glass skins (Midnight, Graphite, Aurora, Sunset)
-- **Haptic feedback** — optional button vibration with adjustable strength
-- **In-app updates** — optionally checks GitHub Releases and installs the new APK for you
-- Auto-reconnect with a quick first-run tutorial
-- Pairing with the PIN shown on the TV (HomeKit-style pair-setup); your credentials never leave the phone (encrypted with the Android Keystore)
+## Highlights
 
-## Install
+- Direct local-network control for Apple TV and Android TV / Google TV.
+- Apple TV Companion Link discovery and PIN pairing.
+- Android TV Remote Service v2 discovery, TLS pairing, and remote control.
+- D-pad navigation, select, Back, Home, Play/Pause, volume, mute, power, and TV input controls.
+- Apple TV touchpad mode with swipe, tap, and long-press actions.
+- mDNS discovery for normal home networks, plus manual IP connection for routed or multi-VLAN networks.
+- Saved TV name, address, port, endpoint, and pairing credentials for future reconnects.
+- Multiple paired TVs with a selectable default remote; a single paired TV opens directly on startup.
+- Pull-to-refresh reconnect and automatic reconnect attempts after a connection loss.
+- Responsive remote layout for phones, tablets, and larger Android displays.
+- Material 3 light, dark, and system appearance modes with seven selectable color themes.
+- Optional haptic feedback with configurable strength.
+- English, Simplified Chinese, and Hindi UI translations.
+- No ads, analytics, trackers, telemetry, cloud sync, or account system.
 
-Grab the APK from [GitHub Releases](../../releases) and install it (you may need to allow installs from unknown sources).
+Keyboard input, voice input, and app launching are intentionally not exposed in the current remote UI. They are being reworked and are not documented as supported features in this release.
 
-**Requirements:** Android 8.0+ (API 26), an Apple TV HD/4K on tvOS 15–26, and both devices on the same Wi-Fi network / subnet.
+## Compatibility
 
-## First run
+### Phone
 
-1. On the Apple TV, check **Settings → AirPlay and HomeKit → Allow Access** permits devices on your network.
-2. Open CyberRemote — your Apple TV should appear in the list.
-3. Tap it, enter the 4-digit PIN shown on the TV, done.
+- Android 8.0 or newer (API 26+).
+- Wi-Fi or another IP connection to the TV's network.
 
-## FAQ
+### TVs
 
-**The app doesn't find my Apple TV.**
-Discovery uses mDNS (Bonjour), which only works within the same broadcast domain. Phone and TV must be on the same subnet/VLAN, and your router must not block multicast ("AP/client isolation" breaks it). As a fallback, use *Connect by IP* (the ⛓ icon) — note the port changes after every Apple TV reboot; you can find the current one with any Bonjour browser.
+- Apple TV models that expose the Companion Link remote service. The current target is tvOS 15+.
+- Android TV / Google TV devices that expose Android TV Remote Service v2.
 
-**Pairing fails or no PIN appears.**
-Check **Settings → AirPlay and HomeKit → Allow Access** on the TV. If a PIN appears but pairing still fails, try once more — then open an issue.
+The phone and TV do not have to be on the same VLAN. They must be able to reach each other through the network firewall and routing policy.
 
-**It stopped working after a tvOS update.**
-The Companion protocol is private and reverse-engineered (by the [pyatv](https://github.com/postlund/pyatv) project); tvOS updates can break it at any time. Check open issues — breakage is usually fixed in pyatv first, and we port the fix.
+## Getting started
 
-**Typing doesn't reach the TV.**
-The keyboard only works while a text field is focused on the TV — the app shows "Typing on …" when it is. Password fields on some tvOS versions block reading the current text; replacing/typing still works.
+1. Install LocalBeam from a release APK.
+2. Keep the TV powered on and make sure its remote service is available.
+3. Open LocalBeam and wait for discovery to list the TV.
+4. Select the TV and enter the pairing code shown on the TV.
+5. After pairing, the remote opens automatically. If more than one TV is paired, choose the preferred default in Settings.
 
-**Why does the app need the multicast permission?**
-`CHANGE_WIFI_MULTICAST_STATE` is required for mDNS discovery on Android; without a multicast lock the scan silently finds nothing. By default the app makes no network connections other than to your Apple TV.
+### Apple TV pairing
 
-The one exception is entirely optional and off by default: if you turn on **Settings → Fetch real app icons**, the Apps grid will call Apple's public iTunes lookup/search API to load real artwork (cached on disk). Leave it off to keep the app fully local — the Apps grid then shows generated initial tiles and makes no outside requests.
+On Apple TV, pairing access is controlled by **Settings → AirPlay and HomeKit → Allow Access**. Apple TV displays a four-digit PIN during pairing.
 
-**Now playing info / artwork?**
-Not in v1 — that needs a different protocol (MRP over AirPlay 2). Planned as a possible v2.
+### Android TV pairing
 
-## Building
+Android TV uses the system Android TV Remote Service pairing screen and displays a six-character hexadecimal code. The TV should remain awake while pairing.
+
+## Discovery and VLANs
+
+LocalBeam uses mDNS/DNS-SD discovery on the local network. Discovery normally works only inside the same multicast or broadcast domain. Wi-Fi client isolation, blocked multicast, or routed VLAN boundaries can prevent a TV from appearing automatically.
+
+When discovery cannot cross your network:
+
+1. Tap **Connect by IP** on the TV list screen.
+2. Select **Apple TV** or **Android TV**.
+3. Enter a friendly TV name, the TV's IP address, and its port.
+4. Tap **Connect** and complete pairing if the TV is not paired yet.
+
+For Android TV, the standard control port is `6466` and the pairing port is `6467`. For Apple TV, the Companion Link port may change after a reboot; discovery or a refreshed manual port may be required.
+
+The manually entered name and endpoint are saved locally. LocalBeam can reuse them for later connections and reconnects, so the address does not need to be entered again. The firewall must allow the required TCP traffic between the phone's VLAN and the TV's VLAN.
+
+## Remote controls
+
+The main remote provides:
+
+- Directional navigation and select.
+- Back and Home; on Apple TV, holding Home opens Control Center.
+- Play/Pause.
+- Volume up and down using the vertical volume control.
+- Mute and TV input on Android TV.
+- Guide and channel controls on Apple TV.
+- Power control. On Android TV, the power key toggles the TV between awake and sleep states.
+
+Apple TV also provides a separate touchpad tab. Android TV uses the direct remote control layout because its Remote Service v2 protocol does not expose the same touch surface.
+
+Every remote key includes visible press feedback and optional haptic feedback. A disconnected remote displays its connection state and can be refreshed by pulling down or tapping **Reconnect**.
+
+## Privacy and network behavior
+
+LocalBeam is designed for local-only operation:
+
+- No account, cloud backend, advertising, analytics, crash-reporting, tracker, or telemetry service is included.
+- TV discovery uses mDNS on the local network.
+- TV commands, pairing traffic, and reconnect traffic are sent only to the selected TV endpoint.
+- Pairing credentials and saved endpoints are stored locally and wrapped with Android Keystore encryption.
+- The `INTERNET` permission is required for local TCP sockets; it does not by itself imply an internet service or cloud connection.
+- `CHANGE_WIFI_MULTICAST_STATE` and `ACCESS_WIFI_STATE` support local mDNS discovery.
+- `VIBRATE` supports optional button feedback.
+- Microphone access is optional and is not part of the current primary remote controls.
+
+## Known limitations
+
+- Apple TV Companion Link is a private, reverse-engineered protocol. A tvOS update may change behavior or require protocol updates.
+- Android TV support depends on the device exposing Android TV Remote Service v2. Vendor firmware can disable or alter that service.
+- mDNS discovery does not reliably cross VLANs; use manual IP connection when routing is available but multicast is not.
+- Installed-app browsing and app launching are currently hidden from the UI.
+- Keyboard and voice controls are currently hidden from the UI while their integrations are being reworked.
+- Now-playing metadata and artwork are not currently implemented.
+
+## Build from source
+
+### Requirements
+
+- JDK 17 or newer.
+- Android SDK with the API 35 platform and build tools.
+- Git with submodule support if you want the reference material included.
+
+### Checkout
 
 ```bash
-./gradlew :protocol:test          # protocol unit tests (pure JVM)
-./gradlew :app:assembleDebug      # APK at app/build/outputs/apk/debug/
-./gradlew :cli:run --args="scan"  # CLI harness for protocol debugging
+git clone --recurse-submodules https://github.com/anand34577/localbeam.git
+cd localbeam
 ```
 
-## Modules
-
-- `protocol/` — pure Kotlin/JVM implementation of the Companion Link protocol: OPACK, TLV8, HAP pair-setup/pair-verify (SRP-6a), the ChaCha20-Poly1305 session, HID/touch/app/power commands and RTI text input (binary-plist keyed archives). No Android dependencies — reusable.
-- `cli/` — command-line harness (`scan`, `pair`, `command`, `text-set`, `focus-state`, …). The primary integration-test tool against real hardware.
-- `app/` — the Android app (Jetpack Compose, Material 3).
-- `docs/protocol-notes.md` — the verified protocol details and where each piece was ported from.
-
-## Credits & license
-
-MIT. The protocol knowledge comes from the outstanding reverse-engineering work of [pyatv](https://github.com/postlund/pyatv) (MIT) — this project is a from-scratch Kotlin implementation following pyatv's documented behavior.
-
----
-
-# CyberRemote 赛博 Apple TV 遥控器
-
-*中文在前 · English below*
-
-一款免费、开源、无广告的 Apple TV 安卓遥控器（tvOS 15+）。它直接在你的本地网络上使用 Apple 的 Companion Link 协议——无需云端、无需中转服务器、无需常驻后台进程、无任何遥测。手机与 Apple TV 直连通信。
-
-> CyberRemote 是一个独立的开源项目，**与 Apple Inc. 无任何关联，未获其认可或赞助**。"Apple TV" 是 Apple Inc. 的商标，此处仅用于说明兼容性。
-
-<p align="center">
-  <img src="docs/screenshots/remote.png" width="240" alt="遥控界面">
-  <img src="https://github.com/user-attachments/assets/2fdf3f5a-a426-4550-b83f-acd42af68785" width="240" alt="触控板界面">
-  <img src="https://github.com/user-attachments/assets/4a444713-9511-4d92-b9d1-aa691d4e18b2" width="240" alt="应用快速启动">
-</p>
-<p align="center">
-  <em>遥控界面 · 触控板 · 应用快速启动</em>
-</p>
-
-## 功能
-
-- **完整键盘输入**——当电视上有输入框获得焦点时，手机键盘会自动弹出并直接输入（搜索框、密码、网址）。支持中日韩文字与 emoji。
-- **语音听写**——点麦克风说话，识别出的文字会输入到电视上聚焦的搜索框（设备本地语音识别，优先离线）。
-- 方向键、OK（轻点=确认，可长按）、返回、主屏、播放/暂停
-- **音量**——点 +/− 或在音量条上上下滑动
-- 唤醒与睡眠
-- 触控板滑动导航
-- 应用列表 + 启动
-- **主题**——浅色 / 深色 / 跟随系统，另有四套玻璃质感皮肤（午夜蓝、石墨灰、极光紫、日落橙）
-- **震动反馈**——可选的按键震动，强度可调
-- **应用内更新**——可选地检查 GitHub Releases 并为你安装新版 APK
-- 自动重连，并附带简短的首次使用引导
-- 使用电视上显示的 PIN 码配对（HomeKit 式的 pair-setup）；你的配对凭据永不离开手机（由 Android Keystore 加密保存）
-
-## 安装
-
-在 [GitHub Releases](../../releases) 下载 APK 并安装（可能需要在系统设置里允许"安装未知来源应用"）。
-
-**环境要求：** Android 8.0+（API 26）、一台运行 tvOS 15–26 的 Apple TV HD/4K，且手机与电视处于同一 Wi-Fi 网络 / 同一子网。
-
-## 首次使用
-
-1. 在 Apple TV 上，确认 **设置 → AirPlay 与 HomeKit → 允许访问** 已允许同一网络下的设备。
-2. 打开 CyberRemote——你的 Apple TV 应会出现在列表中。
-3. 点击它，输入电视上显示的 4 位 PIN 码，完成。
-
-## 常见问题
-
-**App 找不到我的 Apple TV。**
-设备发现依赖 mDNS（Bonjour），它只在同一广播域内有效。手机和电视必须在同一子网 / VLAN，且路由器不能屏蔽组播（开启了"AP 隔离 / 客户端隔离"会导致失效）。作为兜底方案，可使用 *按 IP 连接*（⛓ 图标）——注意 Apple TV 每次重启后端口都会变，你可以用任意 Bonjour 浏览工具查到当前端口。
-
-**配对失败，或电视上不出现 PIN 码。**
-检查电视上的 **设置 → AirPlay 与 HomeKit → 允许访问**。如果 PIN 出现了但配对仍然失败，再试一次——若还不行，请提 issue。
-
-**tvOS 更新后就用不了了。**
-Companion 协议是私有的、通过逆向工程得来的（由 [pyatv](https://github.com/postlund/pyatv) 项目完成）；tvOS 的更新随时可能让它失效。请查看已有的 issue——通常 pyatv 会最先修复，我们再把修复移植过来。
-
-**打的字没有传到电视上。**
-键盘仅在电视上有输入框获得焦点时才起作用——此时 App 会显示"正在向 … 输入"。某些 tvOS 版本的密码框会禁止读取当前文本；但替换 / 输入仍然可用。
-
-**为什么这个 App 需要组播权限？**
-Android 上的 mDNS 发现需要 `CHANGE_WIFI_MULTICAST_STATE`；没有组播锁，扫描会悄无声息地什么都找不到。默认情况下，App 除了连接你的 Apple TV 之外不会发起任何网络连接。
-
-唯一的例外是完全可选、且默认关闭的：如果你打开 **设置 → 获取真实应用图标**，应用网格会调用 Apple 公开的 iTunes 查询 / 搜索 API 来加载真实图标（并缓存到本地磁盘）。保持关闭即可让 App 完全本地运行——此时应用网格会显示自动生成的首字母图块，不向外发起任何请求。
-
-**能看"正在播放"的信息 / 封面吗？**
-v1 暂不支持——那需要另一套协议（MRP over AirPlay 2）。计划作为可能的 v2 功能。
-
-## 构建
+### Useful Gradle tasks
 
 ```bash
-./gradlew :protocol:test          # 协议单元测试（纯 JVM）
-./gradlew :app:assembleDebug      # APK 位于 app/build/outputs/apk/debug/
-./gradlew :cli:run --args="scan"  # 用于协议调试的命令行工具
+# Run the pure JVM protocol tests
+./gradlew :protocol:test
+
+# Build a debug APK
+./gradlew :app:assembleDebug
+
+# Run the local protocol CLI scanner
+./gradlew :cli:run --args="scan"
 ```
 
-## 模块
+On Windows, use `gradlew.bat` in place of `./gradlew`.
 
-- `protocol/` — Companion Link 协议的纯 Kotlin/JVM 实现：OPACK、TLV8、HAP pair-setup/pair-verify（SRP-6a）、ChaCha20-Poly1305 加密会话、HID/触控/应用/电源命令，以及 RTI 文本输入（二进制 plist keyed archive）。不依赖 Android——可被其他项目复用。
-- `cli/` — 命令行工具（`scan`、`pair`、`command`、`text-set`、`focus-state` 等）。针对真实硬件的主要集成测试工具。
-- `app/` — 安卓 App（Jetpack Compose、Material 3）。
-- `docs/protocol-notes.md` — 经核实的协议细节，以及每一部分的移植来源。
+The debug APK is written to `app/build/outputs/apk/debug/`.
 
-## 致谢与许可
+## Project structure
 
-MIT 许可。协议知识来自 [pyatv](https://github.com/postlund/pyatv)（MIT）出色的逆向工程成果——本项目是遵循 pyatv 已记录行为、用 Kotlin 从零编写的独立实现。
+- `app/` — Android application built with Kotlin, Jetpack Compose, and Material 3.
+- `protocol/` — pure Kotlin/JVM implementation of the Apple TV Companion Link protocol, including OPACK, TLV8, HAP pairing, ChaCha20-Poly1305 sessions, HID commands, touch events, and text-input protocol support.
+- `cli/` — command-line harness for protocol discovery, pairing, commands, and diagnostics.
+- `docs/protocol-notes.md` — verified protocol notes and porting references.
+- `docs/screenshots/` — current English UI screenshots used in this README.
+
+## Development notes
+
+Protocol behavior is based on the documented behavior of the [pyatv](https://github.com/postlund/pyatv) project and the reference material in `references/`. Protocol changes should include focused JVM tests and an update to `docs/protocol-notes.md` where appropriate.
+
+## Author and repository
+
+- Author: Anand
+- Repository: [github.com/anand34577/localbeam](https://github.com/anand34577/localbeam)
+
+## License
+
+LocalBeam is released under the [MIT License](LICENSE).
