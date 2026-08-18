@@ -1,9 +1,18 @@
 package dev.companionremote.app.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
@@ -12,12 +21,18 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -38,19 +53,28 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.FastForward
+import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.LiveTv
+import androidx.compose.material.icons.rounded.LocalMovies
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -66,35 +90,52 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.isSystemInDarkTheme
 import dev.companionremote.app.AppViewModel
 import dev.companionremote.app.ConnectionState
+import dev.companionremote.app.MediaAction
 import dev.companionremote.app.R
 import dev.companionremote.app.androidtv.AndroidTvButton
+import dev.companionremote.app.data.AppShortcut
+import dev.companionremote.app.data.RemoteShelfMode
 import dev.companionremote.app.discovery.DiscoveredAtv
 import dev.companionremote.app.discovery.TvPlatform
 import dev.companionremote.app.i18n.LocalAppStrings
 import dev.companionremote.app.theme.glass
 import dev.companionremote.protocol.client.HidCommand
+import dev.companionremote.protocol.client.KeyboardFocusState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -103,9 +144,17 @@ fun RemoteScreen(viewModel: AppViewModel, device: DiscoveredAtv) {
     val connectionError by viewModel.connectionError.collectAsState()
     val hapticEnabled by viewModel.hapticEnabled.collectAsState()
     val hapticStrength by viewModel.hapticStrength.collectAsState()
+    val androidTvShortcuts by viewModel.androidTvShortcuts.collectAsState()
+    val androidTvShortcutColumns by viewModel.androidTvShortcutColumns.collectAsState()
+    val remoteShelfMode by viewModel.remoteShelfMode.collectAsState()
+    val androidTvVoiceActive by viewModel.androidTvVoiceActive.collectAsState()
+    val keyboardFocus by viewModel.keyboardFocus.collectAsState()
+    val keyboardText by viewModel.keyboardText.collectAsState()
+    val keyboardOpenRequest by viewModel.keyboardOpenRequest.collectAsState()
     val introSeen by viewModel.introSeen.collectAsState()
     val androidTv = device.platform == TvPlatform.AndroidTv
     val s = LocalAppStrings.current
+    val context = LocalContext.current
     var powerMenu by remember { mutableStateOf(false) }
     var tab by remember { mutableIntStateOf(0) }
     var introDismissed by remember { mutableStateOf(false) }
@@ -119,10 +168,43 @@ fun RemoteScreen(viewModel: AppViewModel, device: DiscoveredAtv) {
     fun volStep(up: Boolean) { viewModel.pressButton(if (up) HidCommand.VolumeUp else HidCommand.VolumeDown) }
     fun volTap(up: Boolean) { buzz(); volStep(up) }
     fun pressAndroid(command: AndroidTvButton) { buzz(); viewModel.pressAndroidButton(command) }
+    fun launchAndroidApp(packageName: String) { viewModel.launchApp(packageName) }
+    val localVoice = rememberVoiceInput(
+        onResult = viewModel::dictateText,
+        onError = {},
+    )
+    var voicePointerDown by remember { mutableStateOf(false) }
+    val androidVoicePermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted && voicePointerDown) viewModel.startAndroidTvVoice()
+    }
+    fun startVoicePress() {
+        if (voicePointerDown) return
+        voicePointerDown = true
+        buzz()
+        if (!androidTv) {
+            localVoice.start()
+        } else if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            viewModel.startAndroidTvVoice()
+        } else {
+            androidVoicePermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    fun stopVoicePress() {
+        if (!voicePointerDown) return
+        voicePointerDown = false
+        buzz()
+        if (!androidTv) localVoice.stop() else viewModel.stopAndroidTvVoice()
+    }
+    val voiceActive = if (androidTv) androidTvVoiceActive else localVoice.active
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            containerColor = MaterialTheme.colorScheme.background,
+            topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -179,58 +261,140 @@ fun RemoteScreen(viewModel: AppViewModel, device: DiscoveredAtv) {
                     }
                 },
             )
-        },
-    ) { padding ->
-        PullToRefreshBox(
-            isRefreshing = connectionState == ConnectionState.Connecting,
-            onRefresh = {
-                // A pull is an explicit reconnect request even when the
-                // status label still says Connected. Restart the transport
-                // and let the connection state turn the indicator off.
-                viewModel.reconnect()
             },
-            modifier = Modifier.fillMaxSize().padding(padding),
-        ) {
-            Column(Modifier.fillMaxSize()) {
-                SegmentedTabs(tab, includeTouch = !androidTv, onSelect = { tab = it })
+        ) { padding ->
+            PullToRefreshBox(
+                isRefreshing = connectionState == ConnectionState.Connecting,
+                onRefresh = {
+                    // A pull is an explicit reconnect request even when the
+                    // status label still says Connected. Restart the transport
+                    // and let the connection state turn the indicator off.
+                    viewModel.reconnect()
+                },
+                modifier = Modifier.fillMaxSize().padding(padding),
+            ) {
+                Column(Modifier.fillMaxSize()) {
+                    SegmentedTabs(tab, includeTouch = !androidTv, onSelect = { tab = it })
 
-                when (connectionState) {
-                    ConnectionState.Disconnected -> ConnectionBanner(connectionError) { viewModel.reconnect() }
-                    ConnectionState.Connecting -> ReconnectingBanner()
-                    ConnectionState.Connected -> Unit
-                }
+                    when (connectionState) {
+                        ConnectionState.Disconnected -> ConnectionBanner(connectionError) { viewModel.reconnect() }
+                        ConnectionState.Connecting -> ReconnectingBanner()
+                        ConnectionState.Connected -> Unit
+                    }
 
-                if (tab == 0) {
-                    DpadPane(
-                        androidTv = androidTv,
-                        press = ::press,
-                        pressAndroid = ::pressAndroid,
-                        hold = ::hold,
-                        ok = ::ok,
-                        okLong = ::okLong,
-                        volTap = ::volTap,
-                    )
-                } else if (!androidTv) {
-                    TouchpadPane(viewModel, ::press, ::hold, ::ok, ::okLong)
+                    if (tab == 0) {
+                        DpadPane(
+                            androidTv = androidTv,
+                            press = ::press,
+                            pressAndroid = ::pressAndroid,
+                            hold = ::hold,
+                            ok = ::ok,
+                            okLong = ::okLong,
+                            volTap = ::volTap,
+                            voiceActive = voiceActive,
+                            onVoicePress = ::startVoicePress,
+                            onVoiceRelease = ::stopVoicePress,
+                            shelfMode = remoteShelfMode,
+                            mediaPress = { action -> buzz(); viewModel.pressMedia(action) },
+                            shortcuts = androidTvShortcuts,
+                            shortcutColumns = androidTvShortcutColumns,
+                            launchApp = ::launchAndroidApp,
+                            shortcutPress = buzz,
+                        )
+                    } else if (!androidTv) {
+                        TouchpadPane(viewModel, ::press, ::hold, ::ok, ::okLong)
+                    }
                 }
             }
         }
+
+        if (androidTv && keyboardFocus == KeyboardFocusState.Focused) {
+            AndroidTvKeyboardBridge(
+                text = keyboardText,
+                openRequest = keyboardOpenRequest,
+                onTextChanged = viewModel::onKeyboardTextChanged,
+                onDismiss = viewModel::dismissKeyboard,
+            )
+        }
+
+        // First-run tutorial, shown once right after the first pairing.
+        if (!introSeen && !introDismissed) {
+            IntroOverlay(onDone = { introDismissed = true; viewModel.markIntroSeen() })
+        }
+    }
+}
+
+/**
+ * A 1dp local editor used only as an IME bridge. Android TV supplies the
+ * focus event; the phone's normal keyboard edits this field, and the
+ * ViewModel sends the resulting string back using the TV's batch text API.
+ */
+@Composable
+private fun AndroidTvKeyboardBridge(
+    text: String,
+    openRequest: Long,
+    onTextChanged: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+
+    DisposableEffect(Unit) {
+        onDispose { keyboardController?.hide() }
     }
 
-    // First-run tutorial, shown once right after the first pairing.
-    if (!introSeen && !introDismissed) {
-        IntroOverlay(onDone = { introDismissed = true; viewModel.markIntroSeen() })
+    BasicTextField(
+        value = text,
+        onValueChange = onTextChanged,
+        modifier = Modifier
+            .size(1.dp)
+            .alpha(0f)
+            .focusRequester(focusRequester),
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = {
+            keyboardController?.hide()
+            focusManager.clearFocus(force = true)
+            onDismiss()
+        }),
+    )
+
+    LaunchedEffect(openRequest) {
+        focusRequester.requestFocus()
+        keyboardController?.show()
     }
 }
 
 @Composable
 private fun StatusDot(state: ConnectionState) {
-    val color = when (state) {
-        ConnectionState.Connected -> MaterialTheme.colorScheme.primary
+    val darkTheme = isSystemInDarkTheme()
+    val connectedColor = if (darkTheme) Color(0xFF81C995) else Color(0xFF197A3A)
+    val disconnectedColor = if (darkTheme) Color(0xFFFF9A9A) else Color(0xFFC62828)
+    val targetColor = when (state) {
+        ConnectionState.Connected -> connectedColor
         ConnectionState.Connecting -> MaterialTheme.colorScheme.tertiary
-        ConnectionState.Disconnected -> MaterialTheme.colorScheme.error
+        ConnectionState.Disconnected -> disconnectedColor
     }
-    Box(Modifier.size(9.dp).clip(CircleShape).background(color))
+    val color by animateColorAsState(targetColor, label = "connectionStatusColor")
+    val transition = rememberInfiniteTransition(label = "connectionStatusPulse")
+    val connectingScale by transition.animateFloat(
+        initialValue = 0.84f,
+        targetValue = 1.18f,
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+        label = "connectionStatusScale",
+    )
+    Box(
+        Modifier
+            .size(10.dp)
+            .graphicsLayer {
+                val scale = if (state == ConnectionState.Connecting) connectingScale else 1f
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(CircleShape)
+            .background(color),
+    )
 }
 
 @Composable
@@ -324,6 +488,15 @@ private fun DpadPane(
     ok: () -> Unit,
     okLong: () -> Unit,
     volTap: (Boolean) -> Unit,
+    voiceActive: Boolean,
+    onVoicePress: () -> Unit,
+    onVoiceRelease: () -> Unit,
+    shelfMode: RemoteShelfMode,
+    mediaPress: (MediaAction) -> Unit,
+    shortcuts: List<AppShortcut>,
+    shortcutColumns: Int,
+    launchApp: (String) -> Unit,
+    shortcutPress: () -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 600.dp
@@ -355,7 +528,33 @@ private fun DpadPane(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Column(Modifier.padding(14.dp)) {
-                            RemoteActionPanel(androidTv, press, pressAndroid, hold, volTap)
+                            RemoteActionPanel(
+                                androidTv,
+                                press,
+                                pressAndroid,
+                                hold,
+                                volTap,
+                                voiceActive,
+                                onVoicePress,
+                                onVoiceRelease,
+                            )
+                        }
+                    }
+                    if (shelfMode != RemoteShelfMode.None) {
+                        Spacer(Modifier.height(16.dp))
+                        when (shelfMode) {
+                            RemoteShelfMode.Applications -> if (androidTv) {
+                                AndroidTvShortcutPanel(shortcuts, shortcutColumns, launchApp, shortcutPress)
+                            }
+                            RemoteShelfMode.MediaButtons -> MediaButtonPanel(androidTv, mediaPress, shortcutPress)
+                            RemoteShelfMode.ApplicationsAndMedia -> {
+                                if (androidTv) {
+                                    AndroidTvShortcutPanel(shortcuts, shortcutColumns, launchApp, shortcutPress)
+                                    Spacer(Modifier.height(16.dp))
+                                }
+                                MediaButtonPanel(androidTv, mediaPress, shortcutPress)
+                            }
+                            RemoteShelfMode.None -> Unit
                         }
                     }
                 }
@@ -374,7 +573,33 @@ private fun DpadPane(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(Modifier.padding(14.dp)) {
-                        RemoteActionPanel(androidTv, press, pressAndroid, hold, volTap)
+                        RemoteActionPanel(
+                            androidTv,
+                            press,
+                            pressAndroid,
+                            hold,
+                            volTap,
+                            voiceActive,
+                            onVoicePress,
+                            onVoiceRelease,
+                        )
+                    }
+                }
+                    if (shelfMode != RemoteShelfMode.None) {
+                        Spacer(Modifier.height(16.dp))
+                        when (shelfMode) {
+                            RemoteShelfMode.Applications -> if (androidTv) {
+                                AndroidTvShortcutPanel(shortcuts, shortcutColumns, launchApp, shortcutPress)
+                            }
+                            RemoteShelfMode.MediaButtons -> MediaButtonPanel(androidTv, mediaPress, shortcutPress)
+                            RemoteShelfMode.ApplicationsAndMedia -> {
+                                if (androidTv) {
+                                    AndroidTvShortcutPanel(shortcuts, shortcutColumns, launchApp, shortcutPress)
+                                    Spacer(Modifier.height(16.dp))
+                                }
+                                MediaButtonPanel(androidTv, mediaPress, shortcutPress)
+                            }
+                            RemoteShelfMode.None -> Unit
                     }
                 }
             }
@@ -389,6 +614,9 @@ private fun RemoteActionPanel(
     pressAndroid: (AndroidTvButton) -> Unit,
     hold: (HidCommand) -> Unit,
     volTap: (Boolean) -> Unit,
+    voiceActive: Boolean,
+    onVoicePress: () -> Unit,
+    onVoiceRelease: () -> Unit,
 ) {
     var moreMenu by remember { mutableStateOf(false) }
 
@@ -443,18 +671,21 @@ private fun RemoteActionPanel(
             }
             Spacer(Modifier.height(12.dp))
             keyRow {
-                RoundKey(
-                    painter = painterResource(R.drawable.ic_play_pause),
-                    label = "Play/Pause",
-                    size = 56.dp,
-                    onClick = { press(HidCommand.PlayPause) },
-                )
                 if (androidTv) {
                     RoundKey(
                         icon = Icons.Rounded.VolumeOff,
                         label = "Mute",
                         size = 56.dp,
                         onClick = { pressAndroid(AndroidTvButton.Mute) },
+                    )
+                    RoundKey(
+                        icon = Icons.Rounded.Mic,
+                        label = "Hold to talk",
+                        size = 56.dp,
+                        accent = voiceActive,
+                        onClick = {},
+                        onTouchDown = onVoicePress,
+                        onTouchUp = onVoiceRelease,
                     )
                     RoundKey(
                         icon = Icons.Rounded.Tv,
@@ -469,6 +700,14 @@ private fun RemoteActionPanel(
                         size = 56.dp,
                         onClick = { press(HidCommand.ChannelIncrement) },
                     )
+                    RoundKey(
+                        icon = Icons.Rounded.Mic,
+                        label = "Hold to talk",
+                        size = 56.dp,
+                        onClick = {},
+                        onTouchDown = onVoicePress,
+                        onTouchUp = onVoiceRelease,
+                    )
                     Box {
                         RoundKey(icon = Icons.Rounded.MoreVert, label = "More controls", size = 56.dp, onClick = { moreMenu = true })
                         DropdownMenu(expanded = moreMenu, onDismissRequest = { moreMenu = false }) {
@@ -479,6 +718,171 @@ private fun RemoteActionPanel(
                     }
                 }
             }
+        }
+    }
+}
+
+private enum class ShortcutBrand { Zee5, YouTube, PrimeVideo, JioHotstar, Custom }
+
+private fun AppShortcut.brand(): ShortcutBrand = when {
+    id.equals("zee5", ignoreCase = true) || label.equals("ZEE5", ignoreCase = true) -> ShortcutBrand.Zee5
+    id.equals("youtube", ignoreCase = true) || label.equals("YouTube", ignoreCase = true) -> ShortcutBrand.YouTube
+    id.equals("prime_video", ignoreCase = true) || label.equals("Prime Video", ignoreCase = true) -> ShortcutBrand.PrimeVideo
+    id.equals("jiohotstar", ignoreCase = true) || label.equals("JioHotstar", ignoreCase = true) -> ShortcutBrand.JioHotstar
+    else -> ShortcutBrand.Custom
+}
+
+@Composable
+private fun MediaButtonPanel(
+    androidTv: Boolean,
+    onPress: (MediaAction) -> Unit,
+    onPressed: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            "Media controls",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MediaButton(Icons.Rounded.FastRewind, "Rewind", Modifier.weight(1f), onPress, onPressed, MediaAction.Rewind)
+            MediaButton(Icons.Rounded.PlayArrow, "Play/Pause", Modifier.weight(1f), onPress, onPressed, MediaAction.PlayPause)
+            MediaButton(Icons.Rounded.FastForward, "Fast forward", Modifier.weight(1f), onPress, onPressed, MediaAction.FastForward)
+            if (androidTv) {
+                MediaButton(Icons.Rounded.Stop, "Stop", Modifier.weight(1f), onPress, onPressed, MediaAction.Stop)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MediaButton(
+    icon: ImageVector,
+    label: String,
+    modifier: Modifier,
+    onPress: (MediaAction) -> Unit,
+    onPressed: () -> Unit,
+    action: MediaAction,
+) {
+    RoundKey(
+        icon = icon,
+        label = label,
+        size = 52.dp,
+        modifier = modifier,
+        onClick = { onPressed(); onPress(action) },
+    )
+}
+
+/** Separate app section below the action card; its grid fills row by row. */
+@Composable
+private fun AndroidTvShortcutPanel(
+    shortcuts: List<AppShortcut>,
+    columns: Int,
+    onLaunch: (String) -> Unit,
+    onPressed: () -> Unit,
+) {
+    if (shortcuts.isEmpty()) return
+    val safeColumns = columns.coerceIn(2, 4)
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            "Apps",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        shortcuts.chunked(safeColumns).forEachIndexed { rowIndex, row ->
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                row.forEach { shortcut ->
+                    AndroidTvShortcutButton(
+                        shortcut = shortcut,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onLaunch(shortcut.target) },
+                        onPressed = onPressed,
+                    )
+                }
+                repeat(safeColumns - row.size) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+            if (rowIndex < (shortcuts.size - 1) / safeColumns) Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+/** App shortcut with the same scale/ripple treatment as the circular remote keys. */
+@Composable
+private fun AndroidTvShortcutButton(
+    shortcut: AppShortcut,
+    modifier: Modifier,
+    onClick: () -> Unit,
+    onPressed: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.94f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium,
+        ),
+        label = "appShortcutScale",
+    )
+    LaunchedEffect(pressed) {
+        if (pressed) onPressed()
+    }
+    val brand = shortcut.brand()
+    val brandContainer = when (brand) {
+        ShortcutBrand.Zee5 -> MaterialTheme.colorScheme.tertiaryContainer
+        ShortcutBrand.YouTube -> MaterialTheme.colorScheme.errorContainer
+        ShortcutBrand.PrimeVideo -> MaterialTheme.colorScheme.secondaryContainer
+        ShortcutBrand.JioHotstar -> MaterialTheme.colorScheme.primaryContainer
+        ShortcutBrand.Custom -> MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+    val brandContent = when (brand) {
+        ShortcutBrand.Zee5 -> MaterialTheme.colorScheme.onTertiaryContainer
+        ShortcutBrand.YouTube -> MaterialTheme.colorScheme.onErrorContainer
+        ShortcutBrand.PrimeVideo -> MaterialTheme.colorScheme.onSecondaryContainer
+        ShortcutBrand.JioHotstar -> MaterialTheme.colorScheme.onPrimaryContainer
+        ShortcutBrand.Custom -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val brandIcon = when (brand) {
+        ShortcutBrand.Zee5 -> Icons.Rounded.LiveTv
+        ShortcutBrand.YouTube -> Icons.Rounded.PlayArrow
+        ShortcutBrand.PrimeVideo -> Icons.Rounded.LocalMovies
+        ShortcutBrand.JioHotstar -> Icons.Rounded.Tv
+        ShortcutBrand.Custom -> Icons.Rounded.Apps
+    }
+    FilledTonalButton(
+        onClick = onClick,
+        modifier = modifier.graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }.height(64.dp),
+        shape = RoundedCornerShape(16.dp),
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+        interactionSource = interactionSource,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Box(
+                Modifier.size(30.dp).clip(CircleShape).background(brandContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(brandIcon, contentDescription = null, Modifier.size(18.dp), tint = brandContent)
+            }
+            Text(
+                shortcut.label,
+                style = MaterialTheme.typography.labelSmall,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -726,6 +1130,8 @@ private fun RoundKey(
     accent: Boolean = false,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    onTouchDown: (() -> Unit)? = null,
+    onTouchUp: (() -> Unit)? = null,
 ) {
     PressableCircle(
         size = size,
@@ -733,6 +1139,8 @@ private fun RoundKey(
         accent = accent,
         onClick = onClick,
         onLongClick = onLongClick,
+        onTouchDown = onTouchDown,
+        onTouchUp = onTouchUp,
     ) {
         KeyGlyph(icon, painter, label, size * 0.42f, it)
     }
@@ -749,10 +1157,16 @@ private fun PressableCircle(
     showBorder: Boolean = true,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    onTouchDown: (() -> Unit)? = null,
+    onTouchUp: (() -> Unit)? = null,
     content: @Composable (Color) -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
+    val currentOnTouchDown by rememberUpdatedState(onTouchDown)
+    val currentOnTouchUp by rememberUpdatedState(onTouchUp)
+    var touchPressed by remember { mutableStateOf(false) }
+    val interactionPressed by interactionSource.collectIsPressedAsState()
+    val pressed = interactionPressed || touchPressed
     val scale by animateFloatAsState(
         targetValue = if (pressed) 0.90f else 1f,
         animationSpec = spring(
@@ -791,6 +1205,42 @@ private fun PressableCircle(
         label = "remoteButtonBorderColor",
     )
 
+    val gestureModifier = if (onTouchDown != null || onTouchUp != null) {
+        Modifier
+            .indication(interactionSource, LocalIndication.current)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        val pressInteraction = PressInteraction.Press(Offset.Zero)
+                        touchPressed = true
+                        interactionSource.emit(pressInteraction)
+                        currentOnTouchDown?.invoke()
+                        var released = false
+                        try {
+                            released = tryAwaitRelease()
+                        } finally {
+                            touchPressed = false
+                            interactionSource.emit(
+                                if (released) {
+                                    PressInteraction.Release(pressInteraction)
+                                } else {
+                                    PressInteraction.Cancel(pressInteraction)
+                                },
+                            )
+                            currentOnTouchUp?.invoke()
+                        }
+                    },
+                )
+            }
+    } else {
+        Modifier.combinedClickable(
+            interactionSource = interactionSource,
+            indication = LocalIndication.current,
+            onClick = onClick,
+            onLongClick = onLongClick,
+        )
+    }
+
     Box(
         modifier
             .size(size)
@@ -801,12 +1251,7 @@ private fun PressableCircle(
             .clip(CircleShape)
             .background(containerColor, CircleShape)
             .then(if (showBorder) Modifier.border(1.dp, borderColor, CircleShape) else Modifier)
-            .combinedClickable(
-                interactionSource = interactionSource,
-                indication = LocalIndication.current,
-                onClick = onClick,
-                onLongClick = onLongClick,
-            ),
+            .then(gestureModifier),
         contentAlignment = Alignment.Center,
     ) {
         content(contentColor)

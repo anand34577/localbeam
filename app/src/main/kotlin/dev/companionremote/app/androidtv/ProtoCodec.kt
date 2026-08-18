@@ -219,6 +219,24 @@ internal object AndroidTvRemoteCodec {
         ProtoWriter().apply { string(1, link) }.toByteArray(),
     )
 
+    fun voiceBegin(sessionId: Int): ByteArray = frame(
+        30,
+        ProtoWriter().apply { varint(1, sessionId.toLong()) }.toByteArray(),
+    )
+
+    fun voicePayload(sessionId: Int, samples: ByteArray): ByteArray = frame(
+        31,
+        ProtoWriter().apply {
+            varint(1, sessionId.toLong())
+            bytes(2, samples)
+        }.toByteArray(),
+    )
+
+    fun voiceEnd(sessionId: Int): ByteArray = frame(
+        32,
+        ProtoWriter().apply { varint(1, sessionId.toLong()) }.toByteArray(),
+    )
+
     fun read(message: ByteArray): RemoteMessage {
         val outer = ProtoReader(message).readFields()
         val field = outer.firstOrNull { it.wireType == 2 }
@@ -231,7 +249,10 @@ internal object AndroidTvRemoteCodec {
             )
             2 -> RemoteMessage.SetActive
             8 -> RemoteMessage.Ping(nested.firstOrNull { it.number == 1 }?.longValue() ?: 0L)
-            20 -> RemoteMessage.ImeKeyInject
+            20 -> RemoteMessage.ImeKeyInject(
+                packageName = readAppPackage(nested),
+                status = readTextStatus(nested),
+            )
             21 -> RemoteMessage.ImeBatch(
                 nested.firstOrNull { it.number == 1 }?.longValue()?.toInt() ?: 0,
                 nested.firstOrNull { it.number == 2 }?.longValue()?.toInt() ?: 0,
@@ -258,6 +279,15 @@ internal object AndroidTvRemoteCodec {
         )
     }
 
+    private fun readAppPackage(fields: List<ProtoField>): String? {
+        val appInfoBytes = fields.firstOrNull { it.number == 1 }?.bytesValue() ?: return null
+        return ProtoReader(appInfoBytes)
+            .readFields()
+            .firstOrNull { it.number == 12 }
+            ?.stringValue()
+            ?.takeIf { it.isNotBlank() }
+    }
+
     private fun frame(type: Int, body: ByteArray): ByteArray = ProtoWriter.frame(
         ProtoWriter().apply { message(type, body) }.toByteArray(),
     )
@@ -267,7 +297,7 @@ internal sealed interface RemoteMessage {
     data class Configure(val supportedFeatures: Int) : RemoteMessage
     data object SetActive : RemoteMessage
     data class Ping(val value: Long) : RemoteMessage
-    data object ImeKeyInject : RemoteMessage
+    data class ImeKeyInject(val packageName: String?, val status: TextStatus?) : RemoteMessage
     data class ImeBatch(val imeCounter: Int, val fieldCounter: Int) : RemoteMessage
     data class ImeShow(val status: TextStatus?) : RemoteMessage
     data class Start(val started: Boolean) : RemoteMessage

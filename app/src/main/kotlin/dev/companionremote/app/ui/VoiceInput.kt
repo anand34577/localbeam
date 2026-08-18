@@ -52,6 +52,13 @@ import java.util.Locale
 /** Why a voice attempt couldn't proceed (mapped to a message by the caller). */
 enum class VoiceError { PermissionDenied, Unavailable, Failed }
 
+/** Push-to-talk actions exposed by the local speech recognizer. */
+data class VoiceInputActions(
+    val start: () -> Unit,
+    val stop: () -> Unit,
+    val active: Boolean,
+)
+
 /**
  * On-device speech recognition for dictating into a TV search box. Holds the
  * [SpeechRecognizer], Compose-observable [listening]/[partial] state and the
@@ -141,6 +148,14 @@ private class VoiceController(
             }
     }
 
+    fun stop() {
+        if (listening) {
+            recognizer?.stopListening()
+        }
+        listening = false
+        partial = ""
+    }
+
     fun cancel() {
         recognizer?.cancel()
         listening = false
@@ -151,15 +166,15 @@ private class VoiceController(
 }
 
 /**
- * Sets up voice dictation and returns a lambda that starts a listening session
- * (requesting the mic permission on first use). Also emits the listening
- * overlay while active.
+ * Sets up voice dictation and returns push-to-talk actions. Permission is
+ * requested on the first press; releasing before the permission result cancels
+ * the pending start instead of unexpectedly opening the microphone later.
  */
 @Composable
 fun rememberVoiceInput(
     onResult: (String) -> Unit,
     onError: (VoiceError) -> Unit,
-): () -> Unit {
+): VoiceInputActions {
     val context = LocalContext.current
     val currentOnResult by rememberUpdatedState(onResult)
     val currentOnError by rememberUpdatedState(onError)
@@ -181,21 +196,39 @@ fun rememberVoiceInput(
     }
     DisposableEffect(Unit) { onDispose { controller.destroy() } }
 
+    val pendingPermissionStart = remember { mutableStateOf(false) }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) controller.begin() else currentOnError(VoiceError.PermissionDenied)
+        val shouldStart = pendingPermissionStart.value
+        pendingPermissionStart.value = false
+        if (granted && shouldStart) controller.begin()
+        else if (!granted && shouldStart) currentOnError(VoiceError.PermissionDenied)
     }
 
     if (controller.listening) {
         ListeningDialog(partial = controller.partial, onCancel = controller::cancel)
     }
 
-    return {
+    return VoiceInputActions(
+        start = {
         val granted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
-        if (granted) controller.begin() else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-    }
+        if (granted) {
+            pendingPermissionStart.value = false
+            controller.begin()
+        } else {
+            pendingPermissionStart.value = true
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+        },
+        stop = {
+            pendingPermissionStart.value = false
+            controller.stop()
+        },
+        active = controller.listening,
+    )
 }
 
 @Composable

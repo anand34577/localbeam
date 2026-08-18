@@ -24,18 +24,22 @@ LocalBeam is an independent project. It is not affiliated with, endorsed by, or 
 - Apple TV Companion Link discovery and PIN pairing.
 - Android TV Remote Service v2 discovery, TLS pairing, and remote control.
 - D-pad navigation, select, Back, Home, Play/Pause, volume, mute, power, and TV input controls.
+- Customizable Android TV app shortcuts for ZEE5, YouTube, Prime Video, JioHotstar, and user-defined apps.
 - Apple TV touchpad mode with swipe, tap, and long-press actions.
 - mDNS discovery for normal home networks, plus manual IP connection for routed or multi-VLAN networks.
 - Saved TV name, address, port, endpoint, and pairing credentials for future reconnects.
 - Multiple paired TVs with a selectable default remote; a single paired TV opens directly on startup.
 - Pull-to-refresh reconnect and automatic reconnect attempts after a connection loss.
 - Responsive remote layout for phones, tablets, and larger Android displays.
-- Material 3 light, dark, and system appearance modes with seven selectable color themes.
+- Material 3 light, dark, and system appearance modes with seven selectable color themes, plus optional Android 12+ wallpaper-derived Material You colors.
 - Optional haptic feedback with configurable strength.
+- Native Android TV push-to-talk voice search, with on-device dictation fallback for Apple TV.
+- Branded full-label app shortcut buttons with configurable app, media, or hidden lower shelves.
+- Ongoing connection notification with a one-tap reconnect action.
 - English, Simplified Chinese, and Hindi UI translations.
 - No ads, analytics, trackers, telemetry, cloud sync, or account system.
 
-Keyboard input, voice input, and app launching are intentionally not exposed in the current remote UI. They are being reworked and are not documented as supported features in this release.
+Keyboard and voice controls are available from the remote UI. Android TV voice search streams microphone audio directly over the paired Remote Service v2 connection; Apple TV uses Android's on-device speech recognizer.
 
 ## Compatibility
 
@@ -91,6 +95,9 @@ The main remote provides:
 - Play/Pause.
 - Volume up and down using the vertical volume control.
 - Mute and TV input on Android TV.
+- Optional media shelf with rewind, play/pause, fast-forward, and stop controls.
+- Native Android TV voice search from the microphone button; Apple TV voice input uses local on-device recognition.
+- Customizable app shortcuts for ZEE5, YouTube, Prime Video, JioHotstar, and user-defined Android TV package IDs or deep links. Buttons can be reordered and arranged in two-, three-, or four-column grids.
 - Guide and channel controls on Apple TV.
 - Power control. On Android TV, the power key toggles the TV between awake and sleep states.
 
@@ -109,15 +116,15 @@ LocalBeam is designed for local-only operation:
 - The `INTERNET` permission is required for local TCP sockets; it does not by itself imply an internet service or cloud connection.
 - `CHANGE_WIFI_MULTICAST_STATE` and `ACCESS_WIFI_STATE` support local mDNS discovery.
 - `VIBRATE` supports optional button feedback.
-- Microphone access is optional and is not part of the current primary remote controls.
+- Microphone access is optional and is requested only when voice search is used.
 
 ## Known limitations
 
 - Apple TV Companion Link is a private, reverse-engineered protocol. A tvOS update may change behavior or require protocol updates.
 - Android TV support depends on the device exposing Android TV Remote Service v2. Vendor firmware can disable or alter that service.
 - mDNS discovery does not reliably cross VLANs; use manual IP connection when routing is available but multicast is not.
-- Installed-app browsing and app launching are currently hidden from the UI.
-- Keyboard and voice controls are currently hidden from the UI while their integrations are being reworked.
+- The Android TV Remote v2 service does not enumerate installed apps. Built-in shortcuts use package IDs, while custom buttons accept a package ID or app deep link; the target app must be installed or registered on the TV.
+- Android TV voice search depends on the TV's Remote Service v2 voice support and microphone permissions; some vendor firmware may not expose it.
 - Now-playing metadata and artwork are not currently implemented.
 
 ## Build from source
