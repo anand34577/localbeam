@@ -8,6 +8,9 @@ import dev.companionremote.app.androidtv.AndroidTvPairingSession
 import dev.companionremote.app.androidtv.AndroidTvRemoteClient
 import dev.companionremote.app.data.CredentialsRepository
 import dev.companionremote.app.data.HapticStrength
+import dev.companionremote.app.data.AppShortcut
+import dev.companionremote.app.data.AppShortcutDefaults
+import dev.companionremote.app.data.RemoteShelfMode
 import dev.companionremote.app.data.SavedDeviceEndpoint
 import dev.companionremote.app.data.SettingsRepository
 import dev.companionremote.app.data.ThemeMode
@@ -24,6 +27,7 @@ import dev.companionremote.app.theme.ThemeVariant
 import dev.companionremote.protocol.client.CompanionClient
 import dev.companionremote.protocol.client.HidCommand
 import dev.companionremote.protocol.client.KeyboardFocusState
+import dev.companionremote.protocol.client.MediaControlCommand
 import dev.companionremote.protocol.client.TouchPhase
 import kotlinx.coroutines.channels.Channel
 import dev.companionremote.protocol.companion.CompanionConnection
@@ -35,6 +39,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -71,6 +76,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val androidTvDiscovery = AndroidTvDiscovery(application)
     private val credentialsRepository = CredentialsRepository(application)
     private val settingsRepository = SettingsRepository(application)
+    private val connectionNotification = ConnectionNotificationManager(application)
 
     val screen = MutableStateFlow<Screen>(Screen.Startup)
     val deviceList = MutableStateFlow(DeviceListUi())
@@ -86,10 +92,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Accent direction (persisted); all variants remain semantic Material 3 palettes. */
     val themeVariant = MutableStateFlow(ThemeVariant.LocalBeam)
+    val dynamicColor = MutableStateFlow(false)
 
     /** Button-press vibration feedback (persisted). */
     val hapticEnabled = MutableStateFlow(true)
     val hapticStrength = MutableStateFlow(HapticStrength.Medium)
+
+    /** Ordered Android TV app buttons and their grid width. */
+    val androidTvShortcuts = MutableStateFlow(AppShortcutDefaults.all)
+    val androidTvShortcutColumns = MutableStateFlow(2)
+    val remoteShelfMode = MutableStateFlow(RemoteShelfMode.ApplicationsAndMedia)
+
+    /** True while an Android TV Remote v2 voice session is streaming. */
+    val androidTvVoiceActive = MutableStateFlow(false)
 
     /** Whether the first-run remote tutorial has already been shown. */
     val introSeen = MutableStateFlow(false)
@@ -118,6 +133,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** The phone-side edit buffer mirrored to the TV text field. */
     val keyboardText = MutableStateFlow("")
 
+    /** Increments for each TV IME event, including repeated focus events. */
+    val keyboardOpenRequest = MutableStateFlow(0L)
+
     /** Set while the remote screen is active. */
     var client: CompanionClient? = null
         private set
@@ -128,6 +146,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var reconnectJob: Job? = null
     private var keyboardFocusJob: Job? = null
     private var androidKeyboardTextJob: Job? = null
+    private var androidVoiceJob: Job? = null
     private var textSyncJob: Job? = null
     private var connectionGeneration = 0L
     private var lastAndroidAppLaunchAt = 0L
@@ -155,13 +174,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             settingsRepository.themeVariant.collect { themeVariant.value = it }
         }
         viewModelScope.launch {
+            settingsRepository.dynamicColor.collect { dynamicColor.value = it }
+        }
+        viewModelScope.launch {
+            settingsRepository.remoteShelfMode.collect { remoteShelfMode.value = it }
+        }
+        viewModelScope.launch {
             settingsRepository.hapticEnabled.collect { hapticEnabled.value = it }
         }
         viewModelScope.launch {
             settingsRepository.hapticStrength.collect { hapticStrength.value = it }
         }
         viewModelScope.launch {
+            settingsRepository.androidTvShortcuts.collect { androidTvShortcuts.value = it }
+        }
+        viewModelScope.launch {
+            settingsRepository.androidTvShortcutColumns.collect { androidTvShortcutColumns.value = it }
+        }
+        viewModelScope.launch {
             settingsRepository.introSeen.collect { introSeen.value = it }
+        }
+        viewModelScope.launch {
+            combine(connectionState, activeDeviceName) { state, name -> state to name }
+                .collect { (state, name) -> connectionNotification.update(state, name) }
         }
         viewModelScope.launch {
             settingsRepository.defaultDeviceName.collect { defaultDeviceName.value = it }
@@ -190,6 +225,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { settingsRepository.setThemeVariant(variant) }
     }
 
+    fun setDynamicColor(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setDynamicColor(enabled) }
+    }
+
+    fun setRemoteShelfMode(mode: RemoteShelfMode) {
+        viewModelScope.launch { settingsRepository.setRemoteShelfMode(mode) }
+    }
+
     fun setHapticEnabled(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setHapticEnabled(enabled) }
     }
@@ -200,6 +243,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun markIntroSeen() {
         viewModelScope.launch { settingsRepository.setIntroSeen(true) }
+    }
+
+    fun setAndroidTvShortcuts(shortcuts: List<AppShortcut>) {
+        val safe = shortcuts
+            .filter { it.id.isNotBlank() && it.label.isNotBlank() && it.target.isNotBlank() }
+            .distinctBy { it.id }
+            .take(12)
+        if (safe.isEmpty()) return
+        androidTvShortcuts.value = safe
+        viewModelScope.launch { settingsRepository.setAndroidTvShortcuts(safe) }
+    }
+
+    fun setAndroidTvShortcutColumns(columns: Int) {
+        val safe = columns.coerceIn(2, 4)
+        androidTvShortcutColumns.value = safe
+        viewModelScope.launch { settingsRepository.setAndroidTvShortcutColumns(safe) }
     }
 
     fun setDefaultDevice(name: String) {
@@ -700,6 +759,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     check(androidClient === newClient) { "connection closed during verification" }
                     connectionState.value = ConnectionState.Connected
                     observeAndroidKeyboard(newClient)
+                    observeAndroidVoice(newClient)
                     return@launch
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
@@ -792,6 +852,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun closeRemote() {
         startupRoutingPending = false
         reconnectJob?.cancel()
+        androidVoiceJob?.cancel()
         connectionGeneration++
         val current = client
         client = null
@@ -800,6 +861,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         connectionState.value = ConnectionState.Disconnected
         keyboardFocus.value = KeyboardFocusState.Unknown
         keyboardText.value = ""
+        androidTvVoiceActive.value = false
         activeDeviceName.value = null
         viewModelScope.launch { runCatching { current?.disconnect() } }
         currentAndroid?.close()
@@ -829,7 +891,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         touchJob?.cancel()
         keyboardFocusJob?.cancel()
         androidKeyboardTextJob?.cancel()
+        androidVoiceJob?.cancel()
         textSyncJob?.cancel()
+        androidTvVoiceActive.value = false
         keyboardFocus.value = KeyboardFocusState.Unknown
         keyboardText.value = ""
         current?.close()
@@ -932,11 +996,83 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun observeAndroidKeyboard(newClient: AndroidTvRemoteClient) {
         keyboardFocusJob?.cancel()
         androidKeyboardTextJob?.cancel()
+        keyboardFocus.value = newClient.keyboardFocus.value
+        keyboardText.value = newClient.keyboardText.value
+        keyboardOpenRequest.value = newClient.keyboardOpenRequest.value
         keyboardFocusJob = viewModelScope.launch {
-            newClient.keyboardFocus.collect { keyboardFocus.value = it }
+            launch {
+                newClient.keyboardFocus.collect { keyboardFocus.value = it }
+            }
+            launch {
+                newClient.keyboardOpenRequest.collect { keyboardOpenRequest.value = it }
+            }
         }
         androidKeyboardTextJob = viewModelScope.launch {
             newClient.keyboardText.collect { keyboardText.value = it }
+        }
+    }
+
+    private fun observeAndroidVoice(newClient: AndroidTvRemoteClient) {
+        androidVoiceJob?.cancel()
+        androidVoiceJob = viewModelScope.launch {
+            newClient.voiceActive.collect { androidTvVoiceActive.value = it }
+        }
+    }
+
+    fun startAndroidTvVoice() {
+        val currentAndroid = androidClient ?: return
+        viewModelScope.launch {
+            runCatching { currentAndroid.startVoice() }
+                .onFailure { handleRemoteFailure(it, currentAndroid, connectionGeneration) }
+        }
+    }
+
+    fun stopAndroidTvVoice() {
+        val currentAndroid = androidClient ?: return
+        viewModelScope.launch {
+            runCatching { currentAndroid.stopVoice() }
+                .onFailure { handleRemoteFailure(it, currentAndroid, connectionGeneration) }
+        }
+    }
+
+    /** Send a media key through the active platform's native remote protocol. */
+    fun pressMedia(action: MediaAction) {
+        val currentAndroid = androidClient
+        if (currentAndroid != null) {
+            val button = when (action) {
+                MediaAction.Rewind -> AndroidTvButton.MediaRewind
+                MediaAction.PlayPause -> null
+                MediaAction.FastForward -> AndroidTvButton.MediaFastForward
+                MediaAction.Stop -> AndroidTvButton.MediaStop
+            }
+            if (button != null) {
+                pressAndroidButton(button)
+            } else {
+                pressButton(HidCommand.PlayPause)
+            }
+            return
+        }
+        when (action) {
+            MediaAction.PlayPause -> pressButton(HidCommand.PlayPause)
+            MediaAction.Rewind -> viewModelScope.launch {
+                val current = client ?: return@launch
+                val generation = connectionGeneration
+                runCatching {
+                    current.mediaControl(MediaControlCommand.RewindBegin)
+                    delay(350)
+                    current.mediaControl(MediaControlCommand.RewindEnd)
+                }.onFailure { error -> handleRemoteFailure(error, current, generation) }
+            }
+            MediaAction.FastForward -> viewModelScope.launch {
+                val current = client ?: return@launch
+                val generation = connectionGeneration
+                runCatching {
+                    current.mediaControl(MediaControlCommand.FastForwardBegin)
+                    delay(350)
+                    current.mediaControl(MediaControlCommand.FastForwardEnd)
+                }.onFailure { error -> handleRemoteFailure(error, current, generation) }
+            }
+            MediaAction.Stop -> Unit
         }
     }
 
@@ -1031,6 +1167,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Hide the phone keyboard without sending a TV key event. */
+    fun dismissKeyboard() {
+        keyboardFocus.value = KeyboardFocusState.Unfocused
+    }
+
     // Apps (M7)
 
     fun loadApps(force: Boolean = false) {
@@ -1102,6 +1243,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         androidPairing?.cancel()
         client?.close()
         androidClient?.close()
+        connectionNotification.cancel()
     }
 
     private companion object {

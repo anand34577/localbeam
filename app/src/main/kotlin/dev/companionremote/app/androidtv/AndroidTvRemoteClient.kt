@@ -1,5 +1,10 @@
 package dev.companionremote.app.androidtv
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.content.Context
 import android.security.KeyPairGeneratorSpec
 import dev.companionremote.protocol.client.HidCommand
@@ -28,6 +33,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -44,6 +51,27 @@ enum class AndroidTvButton(internal val keyCode: Int) {
     Mute(164),
     Settings(176),
     TvInput(178),
+    MediaStop(86),
+    MediaRewind(89),
+    MediaFastForward(90),
+}
+
+/** Package IDs understood by Android TV Remote Service app-link launches. */
+object AndroidTvApps {
+    const val ZEE5 = "com.graymatrix.did"
+    const val YOUTUBE = "com.google.android.youtube.tv"
+    const val PRIME_VIDEO = "com.amazon.amazonvideo.livingroom"
+    const val JIOHOTSTAR = "in.startv.hotstar"
+
+    val knownApps: Map<String, String> = linkedMapOf(
+        YOUTUBE to "YouTube",
+        "com.netflix.ninja" to "Netflix",
+        "com.disney.disneyplus" to "Disney+",
+        PRIME_VIDEO to "Prime Video",
+        ZEE5 to "ZEE5",
+        JIOHOTSTAR to "JioHotstar",
+        "com.android.vending" to "Play Store",
+    )
 }
 
 /** A local Android TV Remote v2 pairing session. */
@@ -151,6 +179,7 @@ class AndroidTvRemoteClient(
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(Job() + Dispatchers.IO)
     private val writeMutex = Mutex()
+    private val voiceMutex = Mutex()
     private var socket: SSLSocket? = null
     private var readerJob: Job? = null
     private var ready = CompletableDeferred<Unit>()
@@ -159,13 +188,22 @@ class AndroidTvRemoteClient(
     private var imeCounter = 0
     private var fieldCounter = 0
     private var activeFeatures = DEFAULT_FEATURES
+    private var voiceSessionId = -1
+    private var voiceSessionCounter = 0
+    @Volatile
+    private var voiceRecorder: AudioRecord? = null
+    private var voiceJob: Job? = null
 
     private val _keyboardFocus = MutableStateFlow(KeyboardFocusState.Unknown)
     val keyboardFocus: StateFlow<KeyboardFocusState> = _keyboardFocus
     private val _keyboardText = MutableStateFlow("")
     val keyboardText: StateFlow<String> = _keyboardText
+    private val _keyboardOpenRequest = MutableStateFlow(0L)
+    val keyboardOpenRequest: StateFlow<Long> = _keyboardOpenRequest
     private val _currentApp = MutableStateFlow<String?>(null)
     val currentApp: StateFlow<String?> = _currentApp
+    private val _voiceActive = MutableStateFlow(false)
+    val voiceActive: StateFlow<Boolean> = _voiceActive
 
     var onDisconnected: ((Throwable) -> Unit)? = null
 
@@ -195,6 +233,7 @@ class AndroidTvRemoteClient(
                     handle(AndroidTvRemoteCodec.read(readFrame(input)))
                 }
             } catch (e: Exception) {
+                _voiceActive.value = false
                 if (!ready.isCompleted) ready.completeExceptionally(e)
                 if (!locallyClosed) onDisconnected?.invoke(e)
             }
@@ -243,26 +282,124 @@ class AndroidTvRemoteClient(
 
     suspend fun touchTap() = pressButton(HidCommand.Select)
 
-    suspend fun launchApp(link: String) = write(AndroidTvRemoteCodec.appLink(link))
+    suspend fun launchApp(link: String) {
+        val target = link.trim()
+        require(target.isNotEmpty()) { "Android TV app link is empty" }
+        // App shortcuts must send only the app-link request. A follow-up OK
+        // would be interpreted by a playing app as a playback/select action.
+        write(AndroidTvRemoteCodec.appLink(normalizeAndroidTvAppLink(target)))
+    }
+
+    /** Start a native Android TV voice session and stream microphone PCM. */
+    suspend fun startVoice(): Boolean = voiceMutex.withLock {
+        withContext(Dispatchers.IO) {
+        if (appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return@withContext false
+        if (_voiceActive.value) return@withContext true
+        val minimumBuffer = AudioRecord.getMinBufferSize(
+            VOICE_SAMPLE_RATE,
+            VOICE_CHANNEL_CONFIG,
+            VOICE_AUDIO_FORMAT,
+        )
+        if (minimumBuffer <= 0) return@withContext false
+        val bufferSize = maxOf(minimumBuffer, VOICE_CHUNK_BYTES)
+        val recorder = runCatching {
+            AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                VOICE_SAMPLE_RATE,
+                VOICE_CHANNEL_CONFIG,
+                VOICE_AUDIO_FORMAT,
+                bufferSize,
+            )
+        }.getOrNull() ?: return@withContext false
+        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+            recorder.release()
+            return@withContext false
+        }
+
+        var sessionId = -1
+        try {
+            // Android TV opens the voice overlay after the search key. The
+            // short pause matches the proven Remote v2 client flow.
+            write(AndroidTvRemoteCodec.key(KEYCODE_SEARCH, SHORT))
+            delay(200)
+            sessionId = (++voiceSessionCounter).coerceAtLeast(1)
+            write(AndroidTvRemoteCodec.voiceBegin(sessionId))
+            recorder.startRecording()
+            voiceSessionId = sessionId
+            voiceRecorder = recorder
+            _voiceActive.value = true
+            voiceJob = scope.launch(Dispatchers.IO) {
+                val buffer = ByteArray(VOICE_CHUNK_BYTES)
+                try {
+                    while (isActive) {
+                        val count = recorder.read(buffer, 0, buffer.size)
+                        if (count > 0) {
+                            write(AndroidTvRemoteCodec.voicePayload(sessionId, buffer.copyOf(count)))
+                        } else if (count == AudioRecord.ERROR_INVALID_OPERATION ||
+                            count == AudioRecord.ERROR_BAD_VALUE
+                        ) {
+                            break
+                        }
+                    }
+                } catch (error: Exception) {
+                    if (error !is CancellationException && !locallyClosed) {
+                        onDisconnected?.invoke(error)
+                    }
+                } finally {
+                    runCatching { recorder.stop() }
+                    recorder.release()
+                    if (voiceSessionId == sessionId) {
+                        voiceRecorder = null
+                        _voiceActive.value = false
+                    }
+                }
+            }
+            true
+        } catch (error: Exception) {
+            runCatching { recorder.stop() }
+            recorder.release()
+            if (sessionId > 0) runCatching { write(AndroidTvRemoteCodec.voiceEnd(sessionId)) }
+            false
+        }
+        }
+    }
+
+    /** Stop streaming and tell the TV to recognize the captured audio. */
+    suspend fun stopVoice() = voiceMutex.withLock {
+        withContext(Dispatchers.IO) {
+        val sessionId = voiceSessionId
+        voiceSessionId = -1
+        _voiceActive.value = false
+        // AudioRecord.read() is a blocking call. Stop the recorder before
+        // cancelling the streaming coroutine so it can leave read() and send
+        // RemoteVoiceEnd reliably, matching the working reference client.
+        runCatching { voiceRecorder?.stop() }
+        voiceJob?.cancelAndJoin()
+        voiceJob = null
+        voiceRecorder = null
+        if (sessionId > 0 && !locallyClosed) {
+            write(AndroidTvRemoteCodec.voiceEnd(sessionId))
+        }
+        }
+    }
 
     suspend fun wake() = pressButton(HidCommand.Wake)
 
     suspend fun sleep() = pressButton(HidCommand.Sleep)
 
     /** Android TV Remote v2 cannot enumerate installed applications. */
-    fun appList(): Map<String, String> = mapOf(
-        // Android TV Remote Service accepts the installed package ID as the
-        // app link. Sending android-app:// or market:// wrappers is rejected
-        // by some current TV service versions and can close the TLS stream.
-        "com.google.android.youtube.tv" to "YouTube",
-        "com.netflix.ninja" to "Netflix",
-        "com.disney.disneyplus" to "Disney+",
-        "com.amazon.amazonvideo.livingroom" to "Prime Video",
-        "com.android.vending" to "Play Store",
-    )
+    fun appList(): Map<String, String> = AndroidTvApps.knownApps
 
     fun close() {
         locallyClosed = true
+        voiceSessionId = -1
+        _voiceActive.value = false
+        runCatching { voiceRecorder?.stop() }
+        voiceJob?.cancel()
+        voiceJob = null
+        voiceRecorder = null
         readerJob?.cancel()
         scope.cancel()
         runCatching { socket?.close() }
@@ -292,22 +429,34 @@ class AndroidTvRemoteClient(
                 // separate ImeShow event. The counters are only meaningful
                 // for an active text field, so treat them as authoritative
                 // focus evidence as well.
-                _keyboardFocus.value = KeyboardFocusState.Focused
+                signalKeyboardFocus()
             }
             is RemoteMessage.ImeShow -> {
-                _keyboardFocus.value = KeyboardFocusState.Focused
+                signalKeyboardFocus()
                 message.status?.let { _keyboardText.value = it.value }
             }
-            RemoteMessage.ImeKeyInject -> {
-                // This notification is also emitted by TVs that omit the
-                // separate ImeShow packet while a text field is active.
-                _keyboardFocus.value = KeyboardFocusState.Focused
+            is RemoteMessage.ImeKeyInject -> {
+                // This packet also reports the foreground app. Only its
+                // optional text-field status indicates keyboard focus; a
+                // plain app-info update must not open the phone keyboard.
+                message.packageName?.let { _currentApp.value = it }
+                message.status?.let {
+                    signalKeyboardFocus()
+                    _keyboardText.value = it.value
+                }
             }
             is RemoteMessage.Start -> Unit
             is RemoteMessage.Volume -> Unit
+            // A rejected app link is an action-level error. Keep the control
+            // socket alive so other remote buttons continue to work.
             RemoteMessage.Error -> Unit
             RemoteMessage.Unknown -> Unit
         }
+    }
+
+    private fun signalKeyboardFocus() {
+        _keyboardFocus.value = KeyboardFocusState.Focused
+        _keyboardOpenRequest.value += 1
     }
 
     private suspend fun write(data: ByteArray) = withContext(Dispatchers.IO) {
@@ -346,11 +495,36 @@ class AndroidTvRemoteClient(
         private const val START_LONG = 1
         private const val END_LONG = 2
         private const val KEYCODE_DELETE = 67
+        private const val KEYCODE_SEARCH = 84
+        private const val VOICE_SAMPLE_RATE = 8_000
+        private const val VOICE_CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
+        private const val VOICE_AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
+        private const val VOICE_CHUNK_BYTES = 20 * 1024
         private const val DEFAULT_FEATURES = 622
 
         fun deleteIdentity(context: Context, alias: String) = AndroidTvIdentity.delete(context, alias)
     }
 }
+
+/** Android TV Remote v2 accepts URI links directly and package IDs via the
+ * Play Store launch URI used by the Android TV Remote Service. */
+internal fun normalizeAndroidTvAppLink(target: String): String {
+    val scheme = target.substringBefore(':', missingDelimiterValue = "")
+    val isUri = scheme.isNotBlank() && scheme.first().isLetter() &&
+        scheme.drop(1).all { it.isLetterOrDigit() || it == '+' || it == '-' || it == '.' }
+    if (isUri) return target
+    // Some Android TV Remote Service versions ignore package/market links but
+    // resolve the same installed apps through their HTTPS app links. Keep
+    // this mapping for users who already saved the old package-based defaults.
+    return ANDROID_TV_APP_LINKS[target] ?: "market://launch?id=$target"
+}
+
+private val ANDROID_TV_APP_LINKS = mapOf(
+    AndroidTvApps.ZEE5 to "https://www.zee5.com/",
+    AndroidTvApps.YOUTUBE to "https://www.youtube.com",
+    AndroidTvApps.PRIME_VIDEO to "https://www.primevideo.com/",
+    AndroidTvApps.JIOHOTSTAR to "https://www.hotstar.com/",
+)
 
 private object AndroidTvIdentity {
     private const val KEYSTORE = "AndroidKeyStore"
